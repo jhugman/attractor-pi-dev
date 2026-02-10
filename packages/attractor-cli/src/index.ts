@@ -8,7 +8,9 @@ import {
   ConsoleInterviewer,
   AutoApproveInterviewer,
   type PipelineEvent,
+  type CodergenBackend,
 } from "@attractor/core";
+import { PiAgentCodergenBackend } from "@attractor/llm-adapter";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -42,9 +44,16 @@ Options:
   --simulate         Run in simulation mode (no LLM calls)
   --auto-approve     Auto-approve all human gates
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
+  --provider <name>  LLM provider (default: anthropic)
+  --model <id>       LLM model ID (default: claude-sonnet-4-5-20250929)
   --verbose          Show detailed event output
   --help, -h         Show this help
 `);
+}
+
+function getArgValue(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  return idx >= 0 ? args[idx + 1] : undefined;
 }
 
 async function runCommand(args: string[]) {
@@ -53,8 +62,9 @@ async function runCommand(args: string[]) {
   const autoApprove = args.includes("--auto-approve");
   const verbose = args.includes("--verbose");
 
-  const logsDirIdx = args.indexOf("--logs-dir");
-  const logsDir = logsDirIdx >= 0 ? args[logsDirIdx + 1] : undefined;
+  const logsDir = getArgValue(args, "--logs-dir");
+  const provider = getArgValue(args, "--provider");
+  const model = getArgValue(args, "--model");
 
   if (!dotFile) {
     console.error("Error: No DOT file specified");
@@ -96,8 +106,24 @@ async function runCommand(args: string[]) {
     ? new AutoApproveInterviewer()
     : new ConsoleInterviewer();
 
+  let backend: CodergenBackend | null;
+  if (simulate) {
+    backend = null;
+  } else {
+    backend = new PiAgentCodergenBackend({
+      cwd: path.dirname(filePath),
+      ...(provider && { defaultProvider: provider }),
+      ...(model && { defaultModel: model }),
+      onAgentEvent: (event) => {
+        if (verbose) {
+          console.log(`  [agent] ${event.type}`);
+        }
+      },
+    });
+  }
+
   const runner = new PipelineRunner({
-    backend: simulate ? null : undefined,
+    backend,
     interviewer,
     logsRoot,
     onEvent: (event) => {
@@ -119,6 +145,10 @@ async function runCommand(args: string[]) {
   } catch (err) {
     console.error(`Pipeline execution error: ${err}`);
     process.exit(1);
+  } finally {
+    if (backend && "dispose" in backend) {
+      await (backend as PiAgentCodergenBackend).dispose();
+    }
   }
 }
 

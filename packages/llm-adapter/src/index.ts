@@ -1,2 +1,2 @@
-// LLM Adapter - Backend adapter for Attractor pipelines
-export {};
+export { PiAgentCodergenBackend } from "./backend.js";
+export type { PiAgentBackendOptions } from "./backend.js";
