@@ -1,11 +1,7 @@
 import { getModel, type Model, type Api } from "@mariozechner/pi-ai";
 import {
-  createAgentSession,
   AuthStorage,
   ModelRegistry,
-  SessionManager,
-  codingTools,
-  type AgentSession,
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -16,9 +12,25 @@ import type {
   Outcome,
 } from "@attractor/core";
 import { StageStatus } from "@attractor/core";
+import {
+  Session,
+  SessionState,
+  type SessionConfig,
+  type SessionEvent,
+} from "./session.js";
+import {
+  createAnthropicProfile,
+  createOpenAIProfile,
+  createGeminiProfile,
+  type ProviderProfile,
+} from "./provider-profile.js";
+import {
+  LocalExecutionEnvironment,
+  type ExecutionEnvironment,
+} from "./execution-env.js";
 
 export interface PiAgentBackendOptions {
-  /** Default model provider (e.g. "anthropic", "openai") */
+  /** Default model provider (e.g. "anthropic", "openai", "google") */
   defaultProvider?: string;
   /** Default model ID (e.g. "claude-sonnet-4-5-20250929") */
   defaultModel?: string;
@@ -26,24 +38,38 @@ export interface PiAgentBackendOptions {
   defaultThinkingLevel?: ThinkingLevel;
   /** Working directory for coding tools */
   cwd?: string;
-  /** Event listener for agent events */
+  /** Event listener for session events */
+  onSessionEvent?: (event: SessionEvent) => void;
+  /** Legacy event listener for raw agent events */
   onAgentEvent?: (event: AgentSessionEvent) => void;
   /** Reuse sessions across nodes sharing a thread_id */
   reuseSessions?: boolean;
+  /** Session configuration overrides */
+  sessionConfig?: Partial<SessionConfig>;
+  /** Custom execution environment (default: local) */
+  executionEnv?: ExecutionEnvironment;
+  /** Custom provider profile factory override */
+  createProfile?: (provider: string, cwd: string) => ProviderProfile;
 }
 
 /**
- * CodergenBackend implementation using pi-mono's coding agent.
+ * CodergenBackend implementation using pi-mono's coding agent,
+ * wrapped with spec-compliant Session (state machine, limits, loop detection).
  *
- * Each node execution creates (or reuses) an AgentSession with
- * read/write/edit/bash tools, sends the prompt, waits for completion,
- * and returns the assistant's text response.
+ * Each node execution creates (or reuses) a Session with provider-specific
+ * tools, sends the prompt, waits for completion, and returns the response.
  */
 export class PiAgentCodergenBackend implements CodergenBackend {
-  private options: Required<PiAgentBackendOptions>;
-  private sessions = new Map<string, AgentSession>();
+  private options: Required<
+    Pick<
+      PiAgentBackendOptions,
+      "defaultProvider" | "defaultModel" | "defaultThinkingLevel" | "cwd" | "reuseSessions"
+    >
+  > & PiAgentBackendOptions;
+  private sessions = new Map<string, Session>();
   private authStorage: AuthStorage;
   private modelRegistry: ModelRegistry;
+  private executionEnv?: ExecutionEnvironment;
 
   constructor(opts?: PiAgentBackendOptions) {
     this.options = {
@@ -51,11 +77,12 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       defaultModel: opts?.defaultModel ?? "claude-sonnet-4-5-20250929",
       defaultThinkingLevel: opts?.defaultThinkingLevel ?? "high",
       cwd: opts?.cwd ?? process.cwd(),
-      onAgentEvent: opts?.onAgentEvent ?? (() => {}),
       reuseSessions: opts?.reuseSessions ?? true,
+      ...opts,
     };
     this.authStorage = new AuthStorage();
     this.modelRegistry = new ModelRegistry(this.authStorage);
+    this.executionEnv = opts?.executionEnv;
   }
 
   async run(
@@ -63,36 +90,37 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     prompt: string,
     context: Context,
   ): Promise<string | Outcome> {
-    const model = this.resolveModel(node);
+    const provider = node.llmProvider || this.options.defaultProvider;
+    const modelId = node.llmModel || this.options.defaultModel;
     const thinkingLevel = this.resolveThinkingLevel(node);
     const threadKey = this.resolveThreadKey(node, context);
+    const cwd = this.options.cwd;
 
     // Get or create session
-    let session: AgentSession;
+    let session: Session;
     if (this.options.reuseSessions && this.sessions.has(threadKey)) {
       session = this.sessions.get(threadKey)!;
-      // Update model if different
-      const currentModel = session.model;
-      if (currentModel && (currentModel.id !== model.id)) {
-        await session.setModel(model);
-      }
-      session.setThinkingLevel(thinkingLevel);
+      // Update reasoning effort if needed
+      session.setReasoningEffort(thinkingLevel);
     } else {
-      const result = await createAgentSession({
-        model,
-        thinkingLevel,
-        cwd: this.options.cwd,
+      // Resolve profile
+      const profile = this.resolveProfile(provider, modelId, thinkingLevel, cwd);
+
+      // Create execution environment if not provided
+      const execEnv = this.executionEnv ?? new LocalExecutionEnvironment({ cwd });
+
+      session = new Session({
+        profile,
+        executionEnv: execEnv,
+        config: this.options.sessionConfig,
         authStorage: this.authStorage,
         modelRegistry: this.modelRegistry,
-        sessionManager: SessionManager.inMemory(),
       });
-      session = result.session;
 
-      if (result.modelFallbackMessage) {
-        context.appendLog(`[${node.id}] Model fallback: ${result.modelFallbackMessage}`);
+      // Wire up event listeners
+      if (this.options.onSessionEvent) {
+        session.subscribe(this.options.onSessionEvent);
       }
-
-      session.subscribe(this.options.onAgentEvent);
 
       if (this.options.reuseSessions) {
         this.sessions.set(threadKey, session);
@@ -101,8 +129,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
 
     // Send prompt and wait for completion
     try {
-      await session.prompt(prompt);
-      await session.agent.waitForIdle();
+      await session.submit(prompt);
     } catch (err) {
       return {
         status: StageStatus.FAIL,
@@ -123,23 +150,38 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     return responseText;
   }
 
-  /** Resolve a pi-ai Model from node attributes */
-  private resolveModel(node: GraphNode): Model<Api> {
-    const provider = node.llmProvider || this.options.defaultProvider;
-    const modelId = node.llmModel || this.options.defaultModel;
+  /** Resolve a ProviderProfile from provider name */
+  private resolveProfile(
+    provider: string,
+    modelId: string,
+    thinkingLevel: ThinkingLevel,
+    cwd: string,
+  ): ProviderProfile {
+    if (this.options.createProfile) {
+      return this.options.createProfile(provider, cwd);
+    }
 
-    try {
-      return getModel(provider as any, modelId as any);
-    } catch {
-      // Fallback: try finding via registry
-      const found = this.modelRegistry.find(provider, modelId);
-      if (found) return found;
+    const execEnv = this.executionEnv;
+    const profileOpts = {
+      provider,
+      modelId,
+      thinkingLevel,
+      cwd,
+      executionEnv: execEnv,
+    };
 
-      // Last resort: use defaults
-      return getModel(
-        this.options.defaultProvider as any,
-        this.options.defaultModel as any,
-      );
+    switch (provider) {
+      case "openai":
+      case "azure-openai-responses":
+      case "openai-codex":
+        return createOpenAIProfile(profileOpts);
+      case "google":
+      case "google-gemini-cli":
+      case "google-vertex":
+        return createGeminiProfile(profileOpts);
+      default:
+        // Anthropic is the default for all other providers
+        return createAnthropicProfile(profileOpts);
     }
   }
 
@@ -170,7 +212,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   /** Clean up all sessions */
   async dispose(): Promise<void> {
     for (const session of this.sessions.values()) {
-      session.dispose();
+      await session.dispose();
     }
     this.sessions.clear();
   }
