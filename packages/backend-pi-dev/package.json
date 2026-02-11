@@ -1,5 +1,5 @@
 {
-  "name": "@attractor/llm-adapter",
+  "name": "@attractor/backend-pi-dev",
   "version": "0.1.0",
   "description": "LLM backend adapter for Attractor pipelines",
   "type": "module",

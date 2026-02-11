@@ -37,6 +37,12 @@ export interface GraphEdge {
   attrs: Record<string, unknown>;
 }
 
+/** Declared variable: name with optional default value */
+export interface VarDeclaration {
+  name: string;
+  defaultValue?: string;
+}
+
 /** Graph-level attributes */
 export interface GraphAttrs {
   goal: string;
@@ -46,6 +52,10 @@ export interface GraphAttrs {
   retryTarget: string;
   fallbackRetryTarget: string;
   defaultFidelity: string;
+  /** Declared pipeline variables with optional defaults */
+  vars: VarDeclaration[];
+  /** Whether vars was explicitly declared in the DOT source */
+  varsExplicit: boolean;
   [key: string]: unknown;
 }
 

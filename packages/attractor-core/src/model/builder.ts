@@ -4,7 +4,7 @@ import type {
   AstStatement,
   AstValue,
 } from "../parser/ast.js";
-import { Graph, type GraphAttrs, type GraphEdge, type GraphNode } from "./graph.js";
+import { Graph, type GraphAttrs, type GraphEdge, type GraphNode, type VarDeclaration } from "./graph.js";
 import { parseDuration } from "./types.js";
 
 /** Convert an AST value to a plain JS value */
@@ -287,6 +287,25 @@ function deriveClassName(label: string): string {
     .replace(/[^a-z0-9-]/g, "");
 }
 
+/**
+ * Parse vars declaration string: "feature, priority=high, name"
+ * Returns array of VarDeclaration.
+ */
+function parseVarsDeclaration(raw: string): VarDeclaration[] {
+  if (!raw.trim()) return [];
+  return raw.split(",").map((part) => {
+    const trimmed = part.trim();
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx >= 0) {
+      return {
+        name: trimmed.slice(0, eqIdx).trim(),
+        defaultValue: trimmed.slice(eqIdx + 1).trim(),
+      };
+    }
+    return { name: trimmed };
+  }).filter((v) => v.name.length > 0);
+}
+
 function resolveGraphAttrs(raw: Record<string, unknown>): GraphAttrs {
   const str = (key: string, def = ""): string => {
     const v = raw[key];
@@ -298,7 +317,15 @@ function resolveGraphAttrs(raw: Record<string, unknown>): GraphAttrs {
     const n = parseInt(String(v), 10);
     return isNaN(n) ? def : n;
   };
+  const varsRaw = str("vars");
+  const vars = parseVarsDeclaration(varsRaw);
+  const varsExplicit = varsRaw.trim().length > 0;
+  // Implicitly declare $goal if graph has a goal and it's not already in vars
+  if (str("goal") && !vars.some((v) => v.name === "goal")) {
+    vars.unshift({ name: "goal", defaultValue: str("goal") });
+  }
   return {
+    ...raw,
     goal: str("goal"),
     label: str("label"),
     modelStylesheet: str("model_stylesheet"),
@@ -306,6 +333,7 @@ function resolveGraphAttrs(raw: Record<string, unknown>): GraphAttrs {
     retryTarget: str("retry_target"),
     fallbackRetryTarget: str("fallback_retry_target"),
     defaultFidelity: str("default_fidelity"),
-    ...raw,
+    vars,
+    varsExplicit: varsExplicit,
   };
 }

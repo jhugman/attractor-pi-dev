@@ -146,6 +146,62 @@ describe("Validation", () => {
     expect(() => validateOrRaise(graph)).toThrow(ValidationError);
   });
 
+  it("no diagnostic for valid stylesheet", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        graph [model_stylesheet="* { llm_model: sonnet; }"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+    const ssErrors = diags.filter((d) => d.rule === "stylesheet_syntax");
+    expect(ssErrors.length).toBe(0);
+  });
+
+  it("errors on malformed stylesheet", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        graph [model_stylesheet="bad { no-colon }"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+    const ssErrors = diags.filter((d) => d.rule === "stylesheet_syntax");
+    expect(ssErrors.length).toBe(1);
+    expect(ssErrors[0]!.severity).toBe(Severity.ERROR);
+  });
+
+  it("no diagnostic for empty stylesheet", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        graph [model_stylesheet=""]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+    const ssErrors = diags.filter((d) => d.rule === "stylesheet_syntax");
+    expect(ssErrors.length).toBe(0);
+  });
+
+  it("no diagnostic when no model_stylesheet attribute", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+    const ssErrors = diags.filter((d) => d.rule === "stylesheet_syntax");
+    expect(ssErrors.length).toBe(0);
+  });
+
   it("validateOrRaise returns warnings without throwing", () => {
     const ast = parseDot(`
       digraph G {

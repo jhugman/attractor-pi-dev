@@ -132,8 +132,9 @@ Graph attributes are declared in a `graph [ ... ]` block or as top-level `key = 
 
 | Key                       | Type     | Default   | Description |
 |---------------------------|----------|-----------|-------------|
-| `goal`                    | String   | `""`      | Human-readable goal for the pipeline. Exposed as `$goal` in prompt templates and mirrored into the run context as `graph.goal`. |
+| `goal`                    | String   | `""`      | Human-readable goal for the pipeline. Implicitly declared as a pipeline variable; exposed as `$goal` in prompt templates and mirrored into the run context as `graph.goal`. |
 | `label`                   | String   | `""`      | Display name for the graph (used in visualization). |
+| `vars`                    | String   | `""`      | Comma-separated list of pipeline variable declarations with optional defaults. Format: `"name1, name2=default_value"`. Variables are expanded as `$name` in `prompt` and `label` attributes. When present, the `vars_declared` validation rule checks that all `$variable` references in prompts are declared. See Section 9.2. |
 | `model_stylesheet`        | String   | `""`      | CSS-like stylesheet for per-node LLM model/provider defaults. See Section 8. |
 | `default_max_retry`       | Integer  | `50`      | Global retry ceiling for nodes that omit `max_retries`. |
 | `retry_target`            | String   | `""`      | Node ID to jump to if exit is reached with unsatisfied goal gates. |
@@ -147,7 +148,7 @@ Graph attributes are declared in a `graph [ ... ]` block or as top-level `key = 
 | `label`             | String   | node ID         | Display name shown in UI, prompts, and telemetry. |
 | `shape`             | String   | `"box"`         | Graphviz shape. Determines the default handler type (see mapping table below). |
 | `type`              | String   | `""`            | Explicit handler type override. Takes precedence over shape-based resolution. |
-| `prompt`            | String   | `""`            | Primary instruction for the stage. Supports `$goal` variable expansion. Falls back to `label` if empty for LLM stages. |
+| `prompt`            | String   | `""`            | Primary instruction for the stage. Supports three forms: inline text, `@path` file include, or `/command` lookup. All forms support `$variable` expansion. Falls back to `label` if empty for LLM stages. See Section 9.2.1. |
 | `max_retries`       | Integer  | `0`             | Number of additional attempts beyond the initial execution. `max_retries=3` means up to 4 total executions. |
 | `goal_gate`         | Boolean  | `false`         | If `true`, this node must reach SUCCESS before the pipeline can exit. |
 | `retry_target`      | String   | `""`            | Node ID to jump to if this node fails and retries are exhausted. |
@@ -1409,6 +1410,9 @@ Severity:
 | `retry_target_exists`    | WARNING  | `retry_target` and `fallback_retry_target` must reference existing nodes. |
 | `goal_gate_has_retry`    | WARNING  | Nodes with `goal_gate=true` should have a `retry_target` or `fallback_retry_target`. |
 | `prompt_on_llm_nodes`    | WARNING  | Nodes that resolve to the codergen handler should have a `prompt` or `label` attribute. |
+| `vars_declared`          | ERROR    | When `vars` is explicitly declared in the graph block, every `$variable` referenced in node `prompt` or `label` attributes must be declared in `vars`. Skipped when `vars` is absent (backward compatibility). |
+| `prompt_file_exists`     | ERROR    | For `@path` prompts, the referenced file must exist relative to the DOT file directory. |
+| `prompt_command_exists`  | ERROR    | For `/command` prompts, the command must resolve to a `.md` file somewhere in the search path. |
 
 ### 7.3 Validation API
 
@@ -1538,8 +1542,9 @@ INTERFACE Transform:
 Transforms are applied in a defined order after parsing and before validation:
 
 ```
-FUNCTION prepare_pipeline(dot_source):
+FUNCTION prepare_pipeline(dot_source, variables={}):
     graph = parse(dot_source)
+    transforms = [VariableExpansionTransform(variables), StylesheetApplicationTransform(), ...]
     FOR EACH transform IN transforms:
         graph = transform.apply(graph)
     diagnostics = validate(graph)
@@ -1548,16 +1553,118 @@ FUNCTION prepare_pipeline(dot_source):
 
 ### 9.2 Built-In Transforms
 
-**Variable Expansion Transform:** Expands `$goal` in node `prompt` attributes to the graph-level `goal` attribute value.
+**Variable Expansion Transform:** Expands `$identifier` references in node `prompt` and `label` attributes using declared pipeline variables. Variables are declared in the graph-level `vars` attribute with optional defaults. Runtime overrides (e.g. CLI `--set key=value`) take precedence over defaults. The `$goal` variable is implicitly declared when `graph[goal]` is set.
 
 ```
-VariableExpansionTransform:
+VariableExpansionTransform(overrides: Record<string, string>):
     FUNCTION apply(graph) -> Graph:
+        resolved = {}
+        FOR EACH var IN graph.attrs.vars:
+            IF var.defaultValue IS SET:
+                resolved[var.name] = var.defaultValue
+        FOR EACH (key, value) IN overrides:
+            resolved[key] = value
         FOR EACH node IN graph.nodes:
-            IF node.prompt contains "$goal":
-                node.prompt = replace(node.prompt, "$goal", graph.goal)
+            node.prompt = expand_variables(node.prompt, resolved)
+            node.label = expand_variables(node.label, resolved)
         RETURN graph
+
+    FUNCTION expand_variables(text, resolved) -> string:
+        RETURN regex_replace(text, /\$([a-zA-Z_][a-zA-Z0-9_]*)/, (match, name):
+            IF name IN resolved: RETURN resolved[name]
+            ELSE: RETURN match  // leave unresolved as-is
+        )
 ```
+
+**Example:**
+
+```dot
+digraph Feature {
+    graph [
+        goal="Build a widget",
+        vars="feature, priority=high, env=staging"
+    ]
+    plan [prompt="Plan the $feature feature at $priority priority"]
+    deploy [label="Deploy to $env", prompt="Deploy $feature to $env"]
+    start -> plan -> deploy -> exit
+}
+```
+
+CLI usage: `attractor run feature.dot --set feature=login --set env=prod`
+
+### 9.2.1 Prompt Resolution
+
+The `prompt` attribute on any node supports three forms, distinguished by prefix:
+
+| Prefix | Form | Resolution |
+|--------|------|------------|
+| `@`    | File include | Read file relative to DOT file directory |
+| `/`    | Command lookup | Search for command `.md` file in search path |
+| (none) | Inline text | Used as-is (current behavior) |
+
+**`@` file includes** resolve relative to the DOT file's directory. No search path.
+
+```
+DOT file at:  workflows/deploy.dot
+prompt="@IMPLEMENT.md"      →  workflows/IMPLEMENT.md
+prompt="@prompts/review.md" →  workflows/prompts/review.md
+```
+
+**`/` command lookups** translate `:` to `/` in the command name and search for `{name}.md`:
+
+```
+prompt="/rfc-to-plan RFC-006"
+
+Command:  rfc-to-plan    Args: RFC-006
+Search:
+  1. {dot_file_dir}/rfc-to-plan.md
+  2. {project}/.attractor/commands/rfc-to-plan.md
+  3. ~/.attractor/commands/rfc-to-plan.md
+
+prompt="/my:careful-review"
+
+Command:  my:careful-review  →  my/careful-review.md
+Search:
+  1. {dot_file_dir}/my/careful-review.md
+  2. {project}/.attractor/commands/my/careful-review.md
+  3. ~/.attractor/commands/my/careful-review.md
+```
+
+`{project}` root is found by walking up from the DOT file looking for `.git/` or `.attractor/`.
+
+**`ATTRACTOR_COMMANDS_PATH`** environment variable adds extra search directories (comma-separated), checked after `.attractor/commands/` at each scope level. This allows integration with other coding agent command libraries without hardcoded coupling:
+
+```bash
+export ATTRACTOR_COMMANDS_PATH=".claude/commands"
+# Now also searches {project}/.claude/commands/ and ~/.claude/commands/
+```
+
+**Variable expansion** runs as a single pass after file resolution. The variables map includes:
+
+- `$ARGUMENTS` — everything after the command name (empty for `@` and inline forms). Implicitly declared; does not need to appear in `graph[vars]`.
+- All declared `$variables` from `graph[vars]` defaults and `--set` overrides.
+
+**Example command file** (`.attractor/commands/rfc-to-plan.md`):
+
+```markdown
+Break RFC $ARGUMENTS into implementation tasks for the $feature feature.
+Focus on incremental delivery. Priority: $priority.
+```
+
+**Transform order:**
+
+1. **Prompt Resolution Transform** (new): For each node, resolve `@` and `/` prompts to their file contents. Runs before variable expansion.
+2. **Variable Expansion Transform**: Expand all `$variables` (including `$ARGUMENTS`) in a single pass.
+3. **Stylesheet Application Transform**: Apply model stylesheet rules.
+
+### 9.2.2 Prompt Resolution Validation
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| `prompt_file_exists` | ERROR | For `@path` prompts, the referenced file must exist relative to the DOT file directory. |
+| `prompt_command_exists` | ERROR | For `/command` prompts, the command must resolve to a `.md` file somewhere in the search path. |
+
+These checks run at transform time when files are read. The existing `vars_declared` rule catches undeclared `$variables` in the resolved text — since resolution happens before validation, this works for external files too.
 
 **Stylesheet Application Transform:** Applies the `model_stylesheet` to resolve `llm_model`, `llm_provider`, and `reasoning_effort` for each node. See Section 8 for details.
 
@@ -1882,7 +1989,17 @@ This section defines how to validate that an implementation of this spec is comp
 
 - [ ] AST transforms can modify the Graph between parsing and validation
 - [ ] Transform interface: `transform(graph) -> graph`
-- [ ] Built-in variable expansion transform replaces `$goal` in prompts
+- [ ] Built-in variable expansion transform expands all declared `$variables` in prompts and labels
+- [ ] Variables declared via `graph [vars="name, name=default"]` with optional defaults
+- [ ] Runtime overrides via `--set key=value` CLI flag take precedence over defaults
+- [ ] `$goal` is implicitly declared when `graph[goal]` is set
+- [ ] `vars_declared` validation rule catches undeclared `$variable` references
+- [ ] Prompt resolution: `@path` includes file relative to DOT file
+- [ ] Prompt resolution: `/command args` searches `.attractor/commands/` path with `:` as directory separator
+- [ ] Prompt resolution: `ATTRACTOR_COMMANDS_PATH` env var adds extra search directories
+- [ ] Prompt resolution: `$ARGUMENTS` substituted from command args, implicitly declared
+- [ ] `prompt_file_exists` validation catches missing `@` file references
+- [ ] `prompt_command_exists` validation catches unresolvable `/command` references
 - [ ] Custom transforms can be registered and run in order
 - [ ] HTTP server mode (if implemented): POST /run starts pipeline, GET /status checks state, POST /answer submits human input
 
@@ -1911,6 +2028,13 @@ Run this validation matrix -- each cell must pass:
 | Checkpoint save and resume produces same result   | [ ] |
 | Stylesheet applies model override to nodes by shape | [ ] |
 | Prompt variable expansion ($goal) works           | [ ] |
+| General $variable expansion with vars + --set works | [ ] |
+| Undeclared $variable in prompt raises validation error | [ ] |
+| @file prompt includes file content from DOT file dir | [ ] |
+| /command prompt resolves from .attractor/commands/ | [ ] |
+| /my:cmd resolves to my/cmd.md in search path      | [ ] |
+| Missing @file raises prompt_file_exists error      | [ ] |
+| Missing /command raises prompt_command_exists error | [ ] |
 | Parallel fan-out and fan-in complete correctly    | [ ] |
 | Custom handler registration and execution works   | [ ] |
 | Pipeline with 10+ nodes completes without errors  | [ ] |

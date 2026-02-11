@@ -4,6 +4,15 @@ import { applyTransforms, type Transform } from "../transforms/index.js";
 import { validate, validateOrRaise, type Diagnostic } from "../validation/index.js";
 import type { Graph } from "../model/graph.js";
 
+export interface PrepareOptions {
+  /** Custom transforms (replaces defaults if provided) */
+  transforms?: Transform[];
+  /** Variable overrides from CLI --set flags */
+  variables?: Record<string, string>;
+  /** Absolute path to the DOT file (used for prompt resolution) */
+  dotFilePath?: string;
+}
+
 export interface PrepareResult {
   graph: Graph;
   diagnostics: Diagnostic[];
@@ -15,8 +24,13 @@ export interface PrepareResult {
  */
 export function preparePipeline(
   dotSource: string,
-  transforms?: Transform[],
+  transformsOrOptions?: Transform[] | PrepareOptions,
 ): PrepareResult {
+  // Normalize arguments
+  const opts: PrepareOptions = Array.isArray(transformsOrOptions)
+    ? { transforms: transformsOrOptions }
+    : transformsOrOptions ?? {};
+
   // 1. Parse
   const ast = parseDot(dotSource);
 
@@ -24,7 +38,7 @@ export function preparePipeline(
   let graph = buildGraph(ast);
 
   // 3. Apply transforms
-  graph = applyTransforms(graph, transforms);
+  graph = applyTransforms(graph, opts.transforms, opts.variables, opts.dotFilePath);
 
   // 4. Validate
   const diagnostics = validateOrRaise(graph);

@@ -20,12 +20,12 @@ importers:
 
   packages/attractor-cli:
     dependencies:
+      '@attractor/backend-pi-dev':
+        specifier: workspace:*
+        version: link:../backend-pi-dev
       '@attractor/core':
         specifier: workspace:*
         version: link:../attractor-core
-      '@attractor/llm-adapter':
-        specifier: workspace:*
-        version: link:../llm-adapter
     devDependencies:
       typescript:
         specifier: ^5.7.0
@@ -43,7 +43,7 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(yaml@2.8.2)
 
-  packages/llm-adapter:
+  packages/backend-pi-dev:
     dependencies:
       '@attractor/core':
         specifier: workspace:*

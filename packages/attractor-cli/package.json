@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@attractor/core": "workspace:*",
-    "@attractor/llm-adapter": "workspace:*"
+    "@attractor/backend-pi-dev": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -1,7 +1,7 @@
 digraph Branch {
     graph [goal="Implement and validate a feature"]
     rankdir=LR
-    node [shape=box, timeout=900s]
+    node [shape=box, timeout="900s"]
 
     start     [shape=Mdiamond, label="Start"]
     exit      [shape=Msquare, label="Exit"]

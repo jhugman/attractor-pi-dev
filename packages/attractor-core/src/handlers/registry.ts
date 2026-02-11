@@ -66,4 +66,11 @@ export class HandlerRegistry {
     if (handler instanceof ParallelHandler) return handler;
     return undefined;
   }
+
+  /** Get the manager loop handler for wiring the observer */
+  getManagerLoopHandler(): ManagerLoopHandler | undefined {
+    const handler = this.handlers.get("stack.manager_loop");
+    if (handler instanceof ManagerLoopHandler) return handler;
+    return undefined;
+  }
 }

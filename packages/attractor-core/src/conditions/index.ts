@@ -1,60 +1,139 @@
 import type { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
 
+// ── Types ──
+
+export type ComparisonOperator =
+  | "="
+  | "!="
+  | "contains"
+  | "matches"
+  | "<"
+  | ">"
+  | "<="
+  | ">=";
+
 export interface ConditionClause {
   key: string;
-  operator: "=" | "!=";
+  operator: ComparisonOperator;
   value: string;
+  negated: boolean;
 }
 
+/** A group of clauses joined by AND (all must be true) */
+export interface AndGroup {
+  clauses: ConditionClause[];
+}
+
+/** Top-level: groups joined by OR (any must be true) */
 export interface ParsedCondition {
+  groups: AndGroup[];
+  /** Flat view of all clauses (backward compatibility) */
   clauses: ConditionClause[];
   raw: string;
 }
 
+// ── Parsing ──
+
 /**
- * Parse a condition expression string into clauses.
- * Grammar: Clause ( '&&' Clause )*
- * Clause: Key ('=' | '!=') Literal
+ * Strip surrounding quotes from a value string.
+ * Handles both double quotes and single quotes.
+ */
+function stripQuotes(s: string): string {
+  if (s.length >= 2) {
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'"))
+    ) {
+      return s.slice(1, -1);
+    }
+  }
+  return s;
+}
+
+/**
+ * Parse a single clause string (without conjunctions).
+ * Clause: '!'? Key Operator Value
+ * Operators: =, !=, contains, matches, <=, >=, <, >
+ * Or bare key: '!'? Key (treated as key != "")
+ */
+function parseClause(raw: string): ConditionClause {
+  let text = raw.trim();
+
+  // Handle NOT prefix
+  let negated = false;
+  if (text.startsWith("!")) {
+    // But not "!=" — only bare "!" as a prefix
+    const rest = text.slice(1).trim();
+    // Check if this is a standalone negation (not part of !=)
+    // If after removing ! the rest doesn't start with =, it's a NOT prefix
+    if (!rest.startsWith("=")) {
+      negated = true;
+      text = rest;
+    }
+  }
+
+  // Try multi-character operators first (order matters: <=, >= before <, >; != before =)
+  // Also try keyword operators: contains, matches
+  const operatorPatterns: { pattern: RegExp; operator: ComparisonOperator }[] =
+    [
+      { pattern: /\s+contains\s+/, operator: "contains" },
+      { pattern: /\s+matches\s+/, operator: "matches" },
+      { pattern: /<=/, operator: "<=" },
+      { pattern: />=/, operator: ">=" },
+      { pattern: /!=/, operator: "!=" },
+      { pattern: /</, operator: "<" },
+      { pattern: />/, operator: ">" },
+      { pattern: /=/, operator: "=" },
+    ];
+
+  for (const { pattern, operator } of operatorPatterns) {
+    const match = text.match(pattern);
+    if (match && match.index !== undefined) {
+      const key = text.slice(0, match.index).trim();
+      const value = stripQuotes(
+        text.slice(match.index + match[0].length).trim(),
+      );
+      return { key, operator, value, negated };
+    }
+  }
+
+  // Bare key: truthy check (treat as key != "")
+  return { key: text.trim(), operator: "!=", value: "", negated };
+}
+
+/**
+ * Parse a condition expression string into a structured representation.
+ *
+ * Grammar (with precedence):
+ *   Expression = AndExpr ( '||' AndExpr )*
+ *   AndExpr    = Clause ( '&&' Clause )*
+ *   Clause     = '!'? Key Operator Value
+ *   Operator   = '=' | '!=' | 'contains' | 'matches' | '<' | '>' | '<=' | '>='
  */
 export function parseCondition(condition: string): ParsedCondition {
   const raw = condition.trim();
-  if (!raw) return { clauses: [], raw };
+  if (!raw) return { groups: [], clauses: [], raw };
 
-  const parts = raw.split("&&").map((p) => p.trim()).filter(Boolean);
-  const clauses: ConditionClause[] = [];
+  // Split by || first (lower precedence), then by && within each group
+  const orParts = raw.split("||").map((p) => p.trim()).filter(Boolean);
+  const groups: AndGroup[] = [];
+  const allClauses: ConditionClause[] = [];
 
-  for (const part of parts) {
-    // Check != first (before =)
-    const neqIdx = part.indexOf("!=");
-    if (neqIdx >= 0) {
-      clauses.push({
-        key: part.slice(0, neqIdx).trim(),
-        operator: "!=",
-        value: part.slice(neqIdx + 2).trim(),
-      });
-      continue;
+  for (const orPart of orParts) {
+    const andParts = orPart.split("&&").map((p) => p.trim()).filter(Boolean);
+    const clauses: ConditionClause[] = [];
+
+    for (const part of andParts) {
+      const clause = parseClause(part);
+      clauses.push(clause);
+      allClauses.push(clause);
     }
 
-    const eqIdx = part.indexOf("=");
-    if (eqIdx >= 0) {
-      clauses.push({
-        key: part.slice(0, eqIdx).trim(),
-        operator: "=",
-        value: part.slice(eqIdx + 1).trim(),
-      });
-      continue;
-    }
-
-    // Bare key: truthy check (treat as key != "")
-    clauses.push({
-      key: part.trim(),
-      operator: "!=",
-      value: "",
-    });
+    groups.push({ clauses });
   }
 
-  return { clauses, raw };
+  return { groups, clauses: allClauses, raw };
 }
 
 /**
@@ -66,12 +145,22 @@ export function validateConditionSyntax(condition: string): string | null {
     const parsed = parseCondition(condition);
     for (const clause of parsed.clauses) {
       if (!clause.key) return "Empty key in condition clause";
+      // Validate regex for matches operator
+      if (clause.operator === "matches") {
+        try {
+          new RegExp(clause.value);
+        } catch {
+          return `Invalid regex in matches operator: ${clause.value}`;
+        }
+      }
     }
     return null;
   } catch (err) {
     return String(err);
   }
 }
+
+// ── Key resolution ──
 
 /**
  * Resolve a condition variable key against outcome and context.
@@ -102,6 +191,8 @@ export function resolveKey(
   return "";
 }
 
+// ── Evaluation ──
+
 /**
  * Evaluate a single clause against outcome and context.
  */
@@ -111,15 +202,66 @@ function evaluateClause(
   context: Context,
 ): boolean {
   const resolved = resolveKey(clause.key, outcome, context);
-  if (clause.operator === "=") {
-    return resolved === clause.value;
+  let result: boolean;
+
+  switch (clause.operator) {
+    case "=":
+      result = resolved === clause.value;
+      break;
+    case "!=":
+      result = resolved !== clause.value;
+      break;
+    case "contains":
+      result = resolved.includes(clause.value);
+      break;
+    case "matches": {
+      try {
+        const regex = new RegExp(clause.value);
+        result = regex.test(resolved);
+      } catch {
+        result = false;
+      }
+      break;
+    }
+    case "<":
+    case ">":
+    case "<=":
+    case ">=": {
+      const numResolved = Number(resolved);
+      const numValue = Number(clause.value);
+      if (isNaN(numResolved) || isNaN(numValue)) {
+        result = false;
+      } else {
+        switch (clause.operator) {
+          case "<":
+            result = numResolved < numValue;
+            break;
+          case ">":
+            result = numResolved > numValue;
+            break;
+          case "<=":
+            result = numResolved <= numValue;
+            break;
+          case ">=":
+            result = numResolved >= numValue;
+            break;
+        }
+      }
+      break;
+    }
+    default:
+      result = false;
   }
-  return resolved !== clause.value;
+
+  return clause.negated ? !result : result;
 }
 
 /**
  * Evaluate a condition expression string.
  * Empty conditions always return true.
+ *
+ * OR groups: any group being true makes the whole expression true.
+ * AND within groups: all clauses in a group must be true.
  */
 export function evaluateCondition(
   condition: string,
@@ -128,7 +270,11 @@ export function evaluateCondition(
 ): boolean {
   if (!condition.trim()) return true;
   const parsed = parseCondition(condition);
-  return parsed.clauses.every((clause) =>
-    evaluateClause(clause, outcome, context),
+
+  if (parsed.groups.length === 0) return true;
+
+  // OR: any group passing makes the expression true
+  return parsed.groups.some((group) =>
+    group.clauses.every((clause) => evaluateClause(clause, outcome, context)),
   );
 }

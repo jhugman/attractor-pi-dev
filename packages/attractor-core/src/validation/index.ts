@@ -1,6 +1,7 @@
 import type { Graph, GraphNode } from "../model/graph.js";
 import { SHAPE_TO_HANDLER_TYPE, VALID_FIDELITY_MODES } from "../model/types.js";
 import { validateConditionSyntax } from "../conditions/index.js";
+import { validateStylesheetSyntax } from "../stylesheet/index.js";
 
 export enum Severity {
   ERROR = "error",
@@ -187,6 +188,25 @@ const conditionSyntaxRule: LintRule = {
   },
 };
 
+const stylesheetSyntaxRule: LintRule = {
+  name: "stylesheet_syntax",
+  apply(graph) {
+    const source = graph.attrs.modelStylesheet;
+    if (!source) return [];
+    const err = validateStylesheetSyntax(source);
+    if (err) {
+      return [
+        {
+          rule: "stylesheet_syntax",
+          severity: Severity.ERROR,
+          message: `Invalid model_stylesheet: ${err}`,
+        },
+      ];
+    }
+    return [];
+  },
+};
+
 // ── WARNING rules ──
 
 const KNOWN_HANDLER_TYPES = new Set([
@@ -317,6 +337,71 @@ const promptOnLlmNodesRule: LintRule = {
   },
 };
 
+const varsDeclaredRule: LintRule = {
+  name: "vars_declared",
+  apply(graph) {
+    // Skip if vars was not explicitly declared (backward compat)
+    if (!graph.attrs.varsExplicit) return [];
+
+    const declaredNames = new Set(graph.attrs.vars.map((v) => v.name));
+    const diags: Diagnostic[] = [];
+    const varPattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+
+    for (const node of graph.nodes.values()) {
+      for (const field of [node.prompt, node.label]) {
+        if (!field) continue;
+        let match;
+        varPattern.lastIndex = 0;
+        while ((match = varPattern.exec(field)) !== null) {
+          const varName = match[1]!;
+          if (!declaredNames.has(varName)) {
+            diags.push({
+              rule: "vars_declared",
+              severity: Severity.ERROR,
+              message: `Variable '$${varName}' used in node '${node.id}' is not declared in graph vars`,
+              nodeId: node.id,
+              fix: `Add '${varName}' to graph [vars="..."]`,
+            });
+          }
+        }
+      }
+    }
+    return diags;
+  },
+};
+
+const promptFileExistsRule: LintRule = {
+  name: "prompt_file_exists",
+  apply(graph) {
+    const unresolvedFiles = graph.attrs._unresolvedPromptFiles as
+      | Array<{ nodeId: string; filePath: string }>
+      | undefined;
+    if (!unresolvedFiles) return [];
+    return unresolvedFiles.map((entry) => ({
+      rule: "prompt_file_exists",
+      severity: Severity.ERROR,
+      message: `Prompt file not found: ${entry.filePath}`,
+      nodeId: entry.nodeId,
+    }));
+  },
+};
+
+const promptCommandExistsRule: LintRule = {
+  name: "prompt_command_exists",
+  apply(graph) {
+    const unresolvedCommands = graph.attrs._unresolvedPromptCommands as
+      | Array<{ nodeId: string; commandName: string; searchedPaths: string[] }>
+      | undefined;
+    if (!unresolvedCommands) return [];
+    return unresolvedCommands.map((entry) => ({
+      rule: "prompt_command_exists",
+      severity: Severity.ERROR,
+      message: `Command '${entry.commandName}' not found. Searched:\n${entry.searchedPaths.map((p) => `  - ${p}`).join("\n")}`,
+      nodeId: entry.nodeId,
+    }));
+  },
+};
+
 /** All built-in lint rules */
 export const BUILT_IN_RULES: LintRule[] = [
   startNodeRule,
@@ -326,11 +411,15 @@ export const BUILT_IN_RULES: LintRule[] = [
   startNoIncomingRule,
   exitNoOutgoingRule,
   conditionSyntaxRule,
+  stylesheetSyntaxRule,
   typeKnownRule,
   fidelityValidRule,
   retryTargetExistsRule,
   goalGateHasRetryRule,
   promptOnLlmNodesRule,
+  varsDeclaredRule,
+  promptFileExistsRule,
+  promptCommandExistsRule,
 ];
 
 /** Validate a graph, returning all diagnostics */

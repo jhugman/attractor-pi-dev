@@ -59,3 +59,32 @@ export interface Interviewer {
   askMultiple?(questions: Question[]): Promise<Answer[]>;
   inform?(message: string, stage: string): Promise<void>;
 }
+
+/** Child status as seen by the manager observer */
+export type ChildStatus = "running" | "completed" | "failed";
+
+/** Result of an observe() call — telemetry snapshot from the child pipeline */
+export interface ObserveResult {
+  /** Current status of the child pipeline */
+  childStatus: ChildStatus;
+  /** Outcome string from the child (e.g. "success", "fail") when completed/failed */
+  childOutcome?: string;
+  /** Additional telemetry data the observer gathered */
+  telemetry?: Record<string, unknown>;
+}
+
+/** Result of a steer() call — guidance injected into the child pipeline */
+export interface SteerResult {
+  /** Whether the steer action was applied */
+  applied: boolean;
+  /** Optional notes about what guidance was injected */
+  notes?: string;
+}
+
+/** Observer interface for the ManagerLoopHandler's observe/steer cycle */
+export interface ManagerObserver {
+  /** Observe the child pipeline's current state and ingest telemetry into context */
+  observe(context: Context): Promise<ObserveResult>;
+  /** Steer the child pipeline by injecting guidance */
+  steer(context: Context, node: GraphNode): Promise<SteerResult>;
+}

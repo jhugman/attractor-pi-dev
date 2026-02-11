@@ -4,8 +4,11 @@
  * Grammar:
  *   Stylesheet ::= Rule+
  *   Rule       ::= Selector '{' Declaration (';' Declaration)* ';'? '}'
- *   Selector   ::= '*' | '#' Identifier | '.' ClassName
+ *   Selector   ::= '*' | '#' Identifier | '.' ClassName | ShapeName
+ *   ShapeName  ::= [A-Za-z]+   -- bare identifier matching a DOT shape name
  *   Declaration::= Property ':' PropertyValue
+ *
+ * Specificity: universal(0) < shape(1) < class(2) < id(3)
  */
 
 export interface StyleRule {
@@ -14,8 +17,9 @@ export interface StyleRule {
 }
 
 export interface StyleSelector {
-  type: "universal" | "class" | "id";
-  value: string; // "*" for universal, class name, or node id
+  type: "universal" | "shape" | "class" | "id";
+  value: string; // "*" for universal, class name, shape name, or node id
+  shape?: string; // populated when type is "shape"
   specificity: number;
 }
 
@@ -125,7 +129,7 @@ export function parseStylesheet(source: string): StyleRule[] {
         name += trimmed[pos];
         pos++;
       }
-      return { type: "class", value: name, specificity: 1 };
+      return { type: "class", value: name, specificity: 2 };
     }
     if (ch === "#") {
       pos++;
@@ -134,7 +138,16 @@ export function parseStylesheet(source: string): StyleRule[] {
         name += trimmed[pos];
         pos++;
       }
-      return { type: "id", value: name, specificity: 2 };
+      return { type: "id", value: name, specificity: 3 };
+    }
+    // Bare identifier → shape selector
+    if (/[A-Za-z]/.test(ch)) {
+      let name = "";
+      while (pos < trimmed.length && /[A-Za-z]/.test(trimmed[pos]!)) {
+        name += trimmed[pos];
+        pos++;
+      }
+      return { type: "shape", value: name, shape: name, specificity: 1 };
     }
     throw new StylesheetParseError(`Invalid selector character '${ch}'`);
   }
@@ -158,6 +171,7 @@ export function resolveStyleProperties(
   rules: StyleRule[],
   nodeId: string,
   nodeClasses: string[],
+  nodeShape?: string,
 ): Record<string, string> {
   // Collect matching rules with specificity
   const matches: { specificity: number; index: number; decl: StyleDeclaration }[] = [];
@@ -168,6 +182,8 @@ export function resolveStyleProperties(
     let matched = false;
 
     if (sel.type === "universal") {
+      matched = true;
+    } else if (sel.type === "shape" && nodeShape && sel.shape === nodeShape) {
       matched = true;
     } else if (sel.type === "class" && nodeClasses.includes(sel.value)) {
       matched = true;

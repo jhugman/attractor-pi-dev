@@ -27,6 +27,26 @@ describe("Stylesheet Parser", () => {
     expect(rules[0]!.selector.value).toBe("review");
   });
 
+  it("parses shape selector (bare identifier)", () => {
+    const rules = parseStylesheet("box { llm_model: claude-opus-4-6; }");
+    expect(rules.length).toBe(1);
+    expect(rules[0]!.selector.type).toBe("shape");
+    expect(rules[0]!.selector.value).toBe("box");
+    expect(rules[0]!.selector.shape).toBe("box");
+    expect(rules[0]!.selector.specificity).toBe(1);
+  });
+
+  it("parses multiple rules including shape selectors", () => {
+    const rules = parseStylesheet(`
+      * { llm_model: sonnet; llm_provider: anthropic; }
+      box { llm_model: haiku; }
+      .code { llm_model: opus; }
+      #review { reasoning_effort: high; }
+    `);
+    expect(rules.length).toBe(4);
+    expect(rules[1]!.selector.type).toBe("shape");
+  });
+
   it("parses multiple rules", () => {
     const rules = parseStylesheet(`
       * { llm_model: sonnet; llm_provider: anthropic; }
@@ -68,6 +88,70 @@ describe("Style Resolution", () => {
     `);
     const props = resolveStyleProperties(rules, "review", ["code"]);
     expect(props["llm_model"]).toBe("gpt-5");
+  });
+
+  it("shape selector matches nodes with matching shape", () => {
+    const rules = parseStylesheet("box { llm_model: claude-opus-4-6; }");
+    const props = resolveStyleProperties(rules, "mynode", [], "box");
+    expect(props["llm_model"]).toBe("claude-opus-4-6");
+  });
+
+  it("shape selector does not match nodes with different shape", () => {
+    const rules = parseStylesheet("box { llm_model: claude-opus-4-6; }");
+    const props = resolveStyleProperties(rules, "mynode", [], "diamond");
+    expect(props["llm_model"]).toBeUndefined();
+  });
+
+  it("shape selector overrides universal", () => {
+    const rules = parseStylesheet(`
+      * { llm_model: sonnet; }
+      box { llm_model: opus; }
+    `);
+    const props = resolveStyleProperties(rules, "mynode", [], "box");
+    expect(props["llm_model"]).toBe("opus");
+  });
+
+  it("class selector overrides shape selector", () => {
+    const rules = parseStylesheet(`
+      box { llm_model: sonnet; }
+      .code { llm_model: opus; }
+    `);
+    const props = resolveStyleProperties(rules, "impl", ["code"], "box");
+    expect(props["llm_model"]).toBe("opus");
+  });
+
+  it("later shape selector of same specificity wins", () => {
+    const rules = parseStylesheet(`
+      box { llm_model: sonnet; }
+      box { llm_model: opus; }
+    `);
+    const props = resolveStyleProperties(rules, "mynode", [], "box");
+    expect(props["llm_model"]).toBe("opus");
+  });
+
+  it("specificity: universal < shape < class < ID", () => {
+    const rules = parseStylesheet(`
+      * { llm_model: base; }
+      box { llm_model: shape-match; }
+      .code { llm_model: class-match; }
+      #critical { llm_model: id-match; }
+    `);
+
+    // universal only (no shape, no class, no id match)
+    const plain = resolveStyleProperties(rules, "plain", [], "diamond");
+    expect(plain["llm_model"]).toBe("base");
+
+    // shape match overrides universal
+    const shaped = resolveStyleProperties(rules, "shaped", [], "box");
+    expect(shaped["llm_model"]).toBe("shape-match");
+
+    // class match overrides shape
+    const classed = resolveStyleProperties(rules, "classed", ["code"], "box");
+    expect(classed["llm_model"]).toBe("class-match");
+
+    // ID match overrides class
+    const ided = resolveStyleProperties(rules, "critical", ["code"], "box");
+    expect(ided["llm_model"]).toBe("id-match");
   });
 
   it("specificity: universal < class < ID", () => {
@@ -115,6 +199,27 @@ describe("Stylesheet integration with transforms", () => {
     expect(graph.getNode("implement").llmModel).toBe("claude-opus-4-6");
     // critical_review: gets gpt-5 from #critical_review
     expect(graph.getNode("critical_review").llmModel).toBe("gpt-5");
+  });
+
+  it("applies shape selector to nodes during preparePipeline", () => {
+    const { graph } = preparePipeline(`
+      digraph G {
+        graph [
+          goal="test",
+          model_stylesheet="box { llm_model: claude-opus-4-6; }"
+        ]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [shape=box, prompt="Do A"]
+        b [shape=diamond, prompt="Do B"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    // a has shape=box, should match
+    expect(graph.getNode("a").llmModel).toBe("claude-opus-4-6");
+    // b has shape=diamond, should not match
+    expect(graph.getNode("b").llmModel).toBe("");
   });
 
   it("explicit node attributes override stylesheet", () => {

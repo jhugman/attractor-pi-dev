@@ -7,10 +7,11 @@ import {
   Severity,
   ConsoleInterviewer,
   AutoApproveInterviewer,
+  createServer,
   type PipelineEvent,
   type CodergenBackend,
 } from "@attractor/core";
-import { PiAgentCodergenBackend } from "@attractor/llm-adapter";
+import { PiAgentCodergenBackend } from "@attractor/backend-pi-dev";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -25,6 +26,8 @@ async function main() {
     await runCommand(args.slice(1));
   } else if (command === "validate") {
     validateCommand(args.slice(1));
+  } else if (command === "serve") {
+    await serveCommand(args.slice(1));
   } else {
     console.error(`Unknown command: ${command}`);
     printUsage();
@@ -39,14 +42,27 @@ attractor - DOT-based pipeline runner
 Usage:
   attractor run <file.dot> [options]
   attractor validate <file.dot>
+  attractor serve [options]
 
-Options:
+Commands:
+  run        Execute a pipeline from a DOT file
+  validate   Check a DOT file for errors
+  serve      Start HTTP server for web-based pipeline management
+
+Options (run):
   --simulate         Run in simulation mode (no LLM calls)
   --auto-approve     Auto-approve all human gates
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
   --provider <name>  LLM provider (default: anthropic)
   --model <id>       LLM model ID (default: claude-sonnet-4-5-20250929)
+  --set <key=value>  Set a pipeline variable (repeatable)
   --verbose          Show detailed event output
+
+Options (serve):
+  --port <number>    Port to listen on (default: 3000)
+  --host <addr>      Host to bind to (default: 127.0.0.1)
+
+General:
   --help, -h         Show this help
 `);
 }
@@ -57,7 +73,17 @@ function getArgValue(args: string[], flag: string): string | undefined {
 }
 
 async function runCommand(args: string[]) {
-  const dotFile = args.find((a) => !a.startsWith("--"));
+  // Find DOT file: first positional arg (skip values that follow --flags)
+  const flagsWithValues = new Set(["--logs-dir", "--provider", "--model", "--set"]);
+  let dotFile: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i]!.startsWith("--")) {
+      if (flagsWithValues.has(args[i]!)) i++; // skip the flag's value
+      continue;
+    }
+    dotFile = args[i];
+    break;
+  }
   const simulate = args.includes("--simulate");
   const autoApprove = args.includes("--auto-approve");
   const verbose = args.includes("--verbose");
@@ -65,6 +91,22 @@ async function runCommand(args: string[]) {
   const logsDir = getArgValue(args, "--logs-dir");
   const provider = getArgValue(args, "--provider");
   const model = getArgValue(args, "--model");
+
+  // Parse --set key=value flags (repeatable)
+  const variables: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--set" && args[i + 1]) {
+      const pair = args[i + 1]!;
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx >= 0) {
+        variables[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+      } else {
+        console.error(`Error: --set requires key=value format, got: ${pair}`);
+        process.exit(1);
+      }
+      i++; // skip the value
+    }
+  }
 
   if (!dotFile) {
     console.error("Error: No DOT file specified");
@@ -82,7 +124,7 @@ async function runCommand(args: string[]) {
   // Parse and validate
   let graph;
   try {
-    const result = preparePipeline(source);
+    const result = preparePipeline(source, { variables, dotFilePath: filePath });
     graph = result.graph;
     const warnings = result.diagnostics.filter((d) => d.severity === Severity.WARNING);
     for (const w of warnings) {
@@ -168,7 +210,7 @@ function validateCommand(args: string[]) {
   const source = fs.readFileSync(filePath, "utf-8");
 
   try {
-    const result = preparePipeline(source);
+    const result = preparePipeline(source, { dotFilePath: filePath });
     const errors = result.diagnostics.filter((d) => d.severity === Severity.ERROR);
     const warnings = result.diagnostics.filter((d) => d.severity === Severity.WARNING);
 
@@ -194,6 +236,34 @@ function validateCommand(args: string[]) {
     console.error(`Validation failed: ${err}`);
     process.exit(1);
   }
+}
+
+async function serveCommand(args: string[]) {
+  const port = Number(getArgValue(args, "--port") ?? "3000");
+  const host = getArgValue(args, "--host") ?? "127.0.0.1";
+
+  const server = createServer();
+
+  server.listen(port, host, () => {
+    console.log(`Attractor HTTP server listening on http://${host}:${port}`);
+    console.log("Endpoints:");
+    console.log("  POST /run          - Start a pipeline (JSON body: { dotSource })");
+    console.log("  GET  /status/:id   - Get run status");
+    console.log("  POST /answer/:id   - Submit human-in-the-loop answer");
+    console.log("  GET  /events/:id   - SSE event stream");
+  });
+
+  // Keep the process alive until SIGINT/SIGTERM
+  await new Promise<void>((resolve) => {
+    process.on("SIGINT", () => {
+      console.log("\nShutting down...");
+      server.close(() => resolve());
+    });
+    process.on("SIGTERM", () => {
+      console.log("\nShutting down...");
+      server.close(() => resolve());
+    });
+  });
 }
 
 function printEvent(event: PipelineEvent, verbose: boolean) {

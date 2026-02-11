@@ -14,7 +14,9 @@ export type PipelineEvent =
   | InterviewStartedEvent
   | InterviewCompletedEvent
   | InterviewTimeoutEvent
-  | CheckpointSavedEvent;
+  | CheckpointSavedEvent
+  | CheckpointResumedEvent
+  | LoopRestartedEvent;
 
 export interface PipelineStartedEvent {
   type: "pipeline_started";
@@ -126,6 +128,20 @@ export interface InterviewTimeoutEvent {
 export interface CheckpointSavedEvent {
   type: "checkpoint_saved";
   nodeId: string;
+  timestamp: string;
+}
+
+export interface CheckpointResumedEvent {
+  type: "checkpoint_resumed";
+  resumedFromNode: string;
+  skippedNodes: string[];
+  timestamp: string;
+}
+
+export interface LoopRestartedEvent {
+  type: "loop_restarted";
+  fromNode: string;
+  toNode: string;
   timestamp: string;
 }
 
