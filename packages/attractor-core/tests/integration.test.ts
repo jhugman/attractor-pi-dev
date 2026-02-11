@@ -271,7 +271,7 @@ describe("Integration: PipelineRunner", () => {
     const result = await runner.run(graph);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
-    expect(result.completedNodes.length).toBe(11); // start + 10 nodes
+    expect(result.completedNodes.length).toBe(12); // start + 10 nodes + exit
   });
 });
 
@@ -536,28 +536,31 @@ describe("Integration: Smoke Test (spec 11.13)", () => {
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(result.completedNodes).toContain("implement");
 
-    // 5. Verify artifacts
-    expect(
-      fs.existsSync(path.join(tmpDir, "plan", "prompt.md")),
-    ).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, "plan", "response.md")),
-    ).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, "plan", "status.json")),
-    ).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, "implement", "prompt.md")),
-    ).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, "review", "prompt.md")),
-    ).toBe(true);
+    // 5. Verify artifacts for all LLM nodes
+    for (const nodeName of ["plan", "implement", "review"]) {
+      expect(
+        fs.existsSync(path.join(tmpDir, nodeName, "prompt.md")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, nodeName, "response.md")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(tmpDir, nodeName, "status.json")),
+      ).toBe(true);
+    }
+
+    // 5b. Verify goal gate satisfied (implement has goal_gate=true)
+    const implementStatus = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "implement", "status.json"), "utf-8"),
+    );
+    expect(implementStatus.outcome).toBe("success");
 
     // 6. Verify checkpoint
     expect(fs.existsSync(path.join(tmpDir, "checkpoint.json"))).toBe(true);
     const checkpoint = JSON.parse(
       fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),
     );
+    expect(checkpoint.currentNode).toBe("done");
     expect(checkpoint.completedNodes).toContain("plan");
     expect(checkpoint.completedNodes).toContain("implement");
     expect(checkpoint.completedNodes).toContain("review");
@@ -841,8 +844,8 @@ describe("Integration: Checkpoint Resume", () => {
     const finalCheckpoint = JSON.parse(
       fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),
     );
-    // Last completed node should be "c"
-    expect(finalCheckpoint.currentNode).toBe("c");
+    // Last completed node should be "exit" (terminal node is now included in checkpoint)
+    expect(finalCheckpoint.currentNode).toBe("exit");
     expect(finalCheckpoint.completedNodes).toContain("start");
     expect(finalCheckpoint.completedNodes).toContain("a");
     expect(finalCheckpoint.completedNodes).toContain("b");
@@ -1206,5 +1209,111 @@ describe("Integration: Fan-in LLM evaluation (spec §4.9)", () => {
     expect(backendCalledForFanIn).toBe(false);
     // Heuristic should have picked the SUCCESS candidate
     expect(result.context.getString("parallel.fan_in.best_outcome")).toBe("success");
+  });
+});
+
+describe("Integration: Retry on failure (spec §4.5 / 11.12)", () => {
+  it("retries a node that returns RETRY up to max_retries times then succeeds", async () => {
+    const { graph } = preparePipeline(`
+      digraph RetryTest {
+        graph [goal="Test retry"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        flaky [type="flaky_handler", prompt="Flaky work", max_retries=2]
+        start -> flaky -> exit
+      }
+    `);
+
+    let attempts = 0;
+    const events: PipelineEvent[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      onEvent: (e) => events.push(e),
+    });
+
+    runner.registerHandler("flaky_handler", {
+      async execute(_node, _ctx, _graph, _logsRoot) {
+        attempts++;
+        if (attempts < 3) {
+          return { status: StageStatus.RETRY, notes: `attempt ${attempts} failed` };
+        }
+        return { status: StageStatus.SUCCESS, notes: "finally succeeded" };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(attempts).toBe(3); // 1 initial + 2 retries
+
+    // stage_retrying events should have been emitted for the two retries
+    const retryEvents = events.filter((e) => e.type === "stage_retrying");
+    expect(retryEvents.length).toBe(2);
+  });
+
+  it("fails after exhausting max_retries", async () => {
+    const { graph } = preparePipeline(`
+      digraph RetryExhaust {
+        graph [goal="Test retry exhaustion"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_retry", prompt="Always fails", max_retries=2]
+        start -> broken -> exit
+      }
+    `);
+
+    let attempts = 0;
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_retry", {
+      async execute(_node, _ctx, _graph, _logsRoot) {
+        attempts++;
+        return { status: StageStatus.RETRY, notes: `attempt ${attempts}` };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(attempts).toBe(3); // 1 initial + 2 retries, all exhausted
+  });
+});
+
+describe("Integration: Stylesheet model override (spec §8 / 11.12)", () => {
+  it("applies model override to nodes by shape via stylesheet", () => {
+    const { graph } = preparePipeline(`
+      digraph StyleTest {
+        graph [
+          goal="Test stylesheet"
+          model_stylesheet="box { llm_model: claude-sonnet; llm_provider: anthropic; }"
+        ]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [shape=box, prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+
+    const nodeA = graph.getNode("a");
+    expect(nodeA.llmModel).toBe("claude-sonnet");
+    expect(nodeA.llmProvider).toBe("anthropic");
+  });
+
+  it("explicit node attribute overrides stylesheet", () => {
+    const { graph } = preparePipeline(`
+      digraph StyleOverride {
+        graph [
+          goal="Test override"
+          model_stylesheet="box { llm_model: claude-sonnet; }"
+        ]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [shape=box, prompt="Do A", llm_model="gpt-4o"]
+        start -> a -> exit
+      }
+    `);
+
+    // Explicit attribute wins over stylesheet
+    expect(graph.getNode("a").llmModel).toBe("gpt-4o");
   });
 });

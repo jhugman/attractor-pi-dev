@@ -277,6 +277,21 @@ export class PipelineRunner {
           lastOutcome = failOutcome("Goal gate unsatisfied and no retry target");
           break;
         }
+        // Record terminal node and save final checkpoint
+        completedNodes.push(node.id);
+        const termSnap = context.snapshot();
+        const termRetries: Record<string, number> = {};
+        for (const [key, value] of Object.entries(termSnap)) {
+          if (key.startsWith("internal.retry_count.")) {
+            termRetries[key.slice("internal.retry_count.".length)] = Number(value);
+          }
+        }
+        new Checkpoint({
+          currentNode: node.id,
+          completedNodes: [...completedNodes],
+          nodeRetries: termRetries,
+          context: termSnap,
+        }).save(logsRoot);
         break;
       }
 

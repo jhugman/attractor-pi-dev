@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude '**/smoke-*'",
+    "test:smoke": "vitest run --passWithNoTests smoke-test",
     "clean": "rm -rf dist"
   },
   "dependencies": {
