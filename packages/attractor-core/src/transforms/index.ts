@@ -109,21 +109,19 @@ export class PromptResolutionTransform implements Transform {
     const unresolvedFiles: Array<{ nodeId: string; filePath: string }> = [];
     const unresolvedCommands: Array<{ nodeId: string; commandName: string; searchedPaths: string[] }> = [];
 
-    for (const node of graph.nodes.values()) {
-      if (!node.prompt) continue;
-
-      if (node.prompt.startsWith("@")) {
-        // @file include
-        const filePath = node.prompt.slice(1);
+    // Resolve a single string that may start with @ or /
+    const resolveRef = (text: string, nodeId: string): string | undefined => {
+      if (text.startsWith("@")) {
+        const filePath = text.slice(1);
         const resolvedPath = path.resolve(dotFileDir, filePath);
         if (fs.existsSync(resolvedPath)) {
-          node.prompt = fs.readFileSync(resolvedPath, "utf-8");
-        } else {
-          unresolvedFiles.push({ nodeId: node.id, filePath: resolvedPath });
+          return fs.readFileSync(resolvedPath, "utf-8");
         }
-      } else if (node.prompt.startsWith("/")) {
-        // /command lookup
-        const raw = node.prompt.slice(1);
+        unresolvedFiles.push({ nodeId, filePath: resolvedPath });
+        return undefined;
+      }
+      if (text.startsWith("/")) {
+        const raw = text.slice(1);
         const spaceIdx = raw.indexOf(" ");
         let commandName: string;
         let args: string;
@@ -134,33 +132,43 @@ export class PromptResolutionTransform implements Transform {
           commandName = raw;
           args = "";
         }
-
-        // Translate colons to path separators
         commandName = commandName.replace(/:/g, "/");
-
         const envPath = process.env["ATTRACTOR_COMMANDS_PATH"];
         const searchPaths = buildCommandSearchPaths(dotFileDir, commandName, envPath);
-
-        let found = false;
         for (const searchPath of searchPaths) {
           if (fs.existsSync(searchPath)) {
-            node.prompt = fs.readFileSync(searchPath, "utf-8");
-            found = true;
-            break;
+            const existingVar = graph.attrs.vars.find((v) => v.name === "ARGUMENTS");
+            if (existingVar) {
+              existingVar.defaultValue = args;
+            } else {
+              graph.attrs.vars.push({ name: "ARGUMENTS", defaultValue: args });
+            }
+            return fs.readFileSync(searchPath, "utf-8");
           }
         }
+        unresolvedCommands.push({ nodeId, commandName, searchedPaths: searchPaths });
+        return undefined;
+      }
+      return undefined;
+    };
 
-        if (found) {
-          // Inject $ARGUMENTS into the graph's vars for variable expansion
-          const existingVar = graph.attrs.vars.find((v) => v.name === "ARGUMENTS");
-          if (existingVar) {
-            existingVar.defaultValue = args;
-          } else {
-            graph.attrs.vars.push({ name: "ARGUMENTS", defaultValue: args });
+    for (const node of graph.nodes.values()) {
+      // Resolve @file / /command in tool attributes
+      for (const attrKey of ["tool_command", "pre_hook", "post_hook"] as const) {
+        const val = node.attrs[attrKey];
+        if (typeof val === "string" && (val.startsWith("@") || val.startsWith("/"))) {
+          const resolved = resolveRef(val, node.id);
+          if (resolved !== undefined) {
+            node.attrs[attrKey] = resolved;
           }
-        } else {
-          unresolvedCommands.push({ nodeId: node.id, commandName, searchedPaths: searchPaths });
         }
+      }
+
+      if (!node.prompt) continue;
+
+      const resolved = resolveRef(node.prompt, node.id);
+      if (resolved !== undefined) {
+        node.prompt = resolved;
       }
     }
 
@@ -210,6 +218,14 @@ export class VariableExpansionTransform implements Transform {
     for (const node of graph.nodes.values()) {
       if (node.prompt) node.prompt = expand(node.prompt);
       if (node.label) node.label = expand(node.label);
+
+      // Expand variables in tool attributes
+      for (const attrKey of ["tool_command", "pre_hook", "post_hook"] as const) {
+        const val = node.attrs[attrKey];
+        if (typeof val === "string") {
+          node.attrs[attrKey] = expand(val);
+        }
+      }
     }
     return graph;
   }

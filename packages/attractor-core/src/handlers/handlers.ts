@@ -52,7 +52,7 @@ export class CodergenHandler implements Handler {
     let prompt = node.prompt || node.label;
     prompt = prompt.replaceAll("$goal", graph.attrs.goal);
 
-    // 2. Write prompt to logs
+    // 2. Write original prompt to logs
     const stageDir = path.join(logsRoot, node.id);
     fs.mkdirSync(stageDir, { recursive: true });
     fs.writeFileSync(path.join(stageDir, "prompt.md"), prompt);
@@ -73,7 +73,17 @@ export class CodergenHandler implements Handler {
     }
     filteredContext.applyUpdates(filteredSnapshot);
 
-    // 4. Call LLM backend
+    // 4. Preamble synthesis (spec §9.2): when fidelity is not "full", prepend
+    //    a text summary of the filtered context so the LLM has enough context
+    //    to continue work without full conversation history.
+    if (fidelityMode !== "full") {
+      const preamble = synthesizePreamble(filteredSnapshot);
+      if (preamble) {
+        prompt = preamble + "\n\n" + prompt;
+      }
+    }
+
+    // 5. Call LLM backend
     let responseText: string;
     if (this.backend) {
       try {
@@ -90,10 +100,10 @@ export class CodergenHandler implements Handler {
       responseText = `[Simulated] Response for stage: ${node.id}`;
     }
 
-    // 5. Write response to logs
+    // 6. Write response to logs
     fs.writeFileSync(path.join(stageDir, "response.md"), responseText);
 
-    // 6. Return outcome
+    // 7. Return outcome
     const outcome: Outcome = {
       status: StageStatus.SUCCESS,
       notes: `Stage completed: ${node.id}`,
@@ -382,11 +392,15 @@ export class ParallelHandler implements Handler {
   }
 }
 
-/** Fan-in handler */
+/** Fan-in handler (spec §4.9): LLM evaluation when prompt is set, heuristic otherwise */
 export class FanInHandler implements Handler {
+  constructor(private backend: CodergenBackend | null = null) {}
+
   async execute(
     node: GraphNode,
     context: Context,
+    graph: Graph,
+    logsRoot: string,
   ): Promise<Outcome> {
     const resultsRaw = context.getString("parallel.results");
     if (!resultsRaw) {
@@ -398,6 +412,38 @@ export class FanInHandler implements Handler {
       results = JSON.parse(resultsRaw) as Outcome[];
     } catch {
       return failOutcome("Failed to parse parallel results");
+    }
+
+    // LLM-based evaluation: when the fan-in node has a prompt, call the
+    // backend to rank candidates instead of using the heuristic.
+    if (node.prompt && this.backend) {
+      try {
+        const evalPrompt =
+          node.prompt +
+          "\n\n## Candidates\n" +
+          results
+            .map(
+              (r, i) =>
+                `### Candidate ${i + 1}\n- Status: ${r.status}\n- Notes: ${r.notes ?? "(none)"}`,
+            )
+            .join("\n\n");
+
+        const backendResult = await this.backend.run(node, evalPrompt, context);
+        if (typeof backendResult === "object" && "status" in backendResult) {
+          return backendResult as Outcome;
+        }
+
+        // Backend returned a string — treat it as notes on the selection
+        return successOutcome({
+          contextUpdates: {
+            "parallel.fan_in.best_outcome": StageStatus.SUCCESS,
+            "parallel.fan_in.llm_evaluation": String(backendResult),
+          },
+          notes: `LLM evaluation: ${String(backendResult).slice(0, 200)}`,
+        });
+      } catch (err) {
+        return failOutcome(`Fan-in LLM evaluation failed: ${String(err)}`);
+      }
     }
 
     // Heuristic select: rank by status, pick best
@@ -612,6 +658,24 @@ function writeStatus(stageDir: string, outcome: Outcome): void {
     path.join(stageDir, "status.json"),
     JSON.stringify(data, null, 2),
   );
+}
+
+/**
+ * Synthesize a preamble from a fidelity-filtered context snapshot (spec §9.2).
+ * Converts key-value pairs into a readable text block that gives the LLM
+ * enough context to continue work without full conversation history.
+ */
+function synthesizePreamble(snapshot: Record<string, unknown>): string {
+  const entries = Object.entries(snapshot).filter(
+    ([key]) => !key.startsWith("internal."),
+  );
+  if (entries.length === 0) return "";
+
+  const lines = entries.map(([key, value]) => {
+    const v = value === "" ? "(empty)" : String(value);
+    return `- ${key}: ${v}`;
+  });
+  return "## Context from previous stages\n" + lines.join("\n");
 }
 
 /**

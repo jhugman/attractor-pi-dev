@@ -134,7 +134,7 @@ Graph attributes are declared in a `graph [ ... ]` block or as top-level `key = 
 |---------------------------|----------|-----------|-------------|
 | `goal`                    | String   | `""`      | Human-readable goal for the pipeline. Implicitly declared as a pipeline variable; exposed as `$goal` in prompt templates and mirrored into the run context as `graph.goal`. |
 | `label`                   | String   | `""`      | Display name for the graph (used in visualization). |
-| `vars`                    | String   | `""`      | Comma-separated list of pipeline variable declarations with optional defaults. Format: `"name1, name2=default_value"`. Variables are expanded as `$name` in `prompt` and `label` attributes. When present, the `vars_declared` validation rule checks that all `$variable` references in prompts are declared. See Section 9.2. |
+| `vars`                    | String   | `""`      | Comma-separated list of pipeline variable declarations with optional defaults. Format: `"name1, name2=default_value"`. Variables are expanded as `$name` in `prompt`, `label`, `tool_command`, `pre_hook`, and `post_hook` attributes. When present, the `vars_declared` validation rule checks that all `$variable` references in these attributes are declared. See Section 9.2. |
 | `model_stylesheet`        | String   | `""`      | CSS-like stylesheet for per-node LLM model/provider defaults. See Section 8. |
 | `default_max_retry`       | Integer  | `50`      | Global retry ceiling for nodes that omit `max_retries`. |
 | `retry_target`            | String   | `""`      | Node ID to jump to if exit is reached with unsatisfied goal gates. |
@@ -1410,7 +1410,7 @@ Severity:
 | `retry_target_exists`    | WARNING  | `retry_target` and `fallback_retry_target` must reference existing nodes. |
 | `goal_gate_has_retry`    | WARNING  | Nodes with `goal_gate=true` should have a `retry_target` or `fallback_retry_target`. |
 | `prompt_on_llm_nodes`    | WARNING  | Nodes that resolve to the codergen handler should have a `prompt` or `label` attribute. |
-| `vars_declared`          | ERROR    | When `vars` is explicitly declared in the graph block, every `$variable` referenced in node `prompt` or `label` attributes must be declared in `vars`. Skipped when `vars` is absent (backward compatibility). |
+| `vars_declared`          | ERROR    | When `vars` is explicitly declared in the graph block, every `$variable` referenced in node `prompt`, `label`, `tool_command`, `pre_hook`, or `post_hook` attributes must be declared in `vars`. Skipped when `vars` is absent (backward compatibility). |
 | `prompt_file_exists`     | ERROR    | For `@path` prompts, the referenced file must exist relative to the DOT file directory. |
 | `prompt_command_exists`  | ERROR    | For `/command` prompts, the command must resolve to a `.md` file somewhere in the search path. |
 
@@ -1553,7 +1553,7 @@ FUNCTION prepare_pipeline(dot_source, variables={}):
 
 ### 9.2 Built-In Transforms
 
-**Variable Expansion Transform:** Expands `$identifier` references in node `prompt` and `label` attributes using declared pipeline variables. Variables are declared in the graph-level `vars` attribute with optional defaults. Runtime overrides (e.g. CLI `--set key=value`) take precedence over defaults. The `$goal` variable is implicitly declared when `graph[goal]` is set.
+**Variable Expansion Transform:** Expands `$identifier` references in node `prompt`, `label`, `tool_command`, `pre_hook`, and `post_hook` attributes using declared pipeline variables. Variables are declared in the graph-level `vars` attribute with optional defaults. Runtime overrides (e.g. CLI `--set key=value`) take precedence over defaults. The `$goal` variable is implicitly declared when `graph[goal]` is set.
 
 ```
 VariableExpansionTransform(overrides: Record<string, string>):
@@ -1567,6 +1567,9 @@ VariableExpansionTransform(overrides: Record<string, string>):
         FOR EACH node IN graph.nodes:
             node.prompt = expand_variables(node.prompt, resolved)
             node.label = expand_variables(node.label, resolved)
+            node.tool_command = expand_variables(node.tool_command, resolved)
+            node.pre_hook = expand_variables(node.pre_hook, resolved)
+            node.post_hook = expand_variables(node.post_hook, resolved)
         RETURN graph
 
     FUNCTION expand_variables(text, resolved) -> string:
@@ -1770,29 +1773,55 @@ Hook failures (non-zero exit) do not block the tool call but are recorded in the
 
 ### 10.1 Overview
 
-Edge conditions use a minimal boolean expression language to gate edge eligibility during routing. The language is deliberately simple to keep routing deterministic and inspectable.
+Edge conditions use a boolean expression language to gate edge eligibility during routing. The language supports equality, inequality, substring, regex, and numeric comparison operators, combined with AND (`&&`), OR (`||`), and NOT (`!`) logical connectives. It is kept deliberately compact -- no parenthesized grouping, no nested expressions -- to keep routing deterministic and inspectable.
 
 ### 10.2 Grammar
 
 ```
-ConditionExpr  ::= Clause ( '&&' Clause )*
-Clause         ::= Key Operator Literal
+ConditionExpr  ::= AndGroup ( '||' AndGroup )*
+AndGroup       ::= Clause ( '&&' Clause )*
+Clause         ::= '!'? Key Operator Value
+                 | '!'? Key                        -- bare key (truthy check)
 Key            ::= 'outcome'
                  | 'preferred_label'
                  | 'context.' Path
+                 | Identifier                      -- direct context lookup
 Path           ::= Identifier ( '.' Identifier )*
-Operator       ::= '=' | '!='
-Literal        ::= String | Integer | Boolean
+Operator       ::= '=' | '!=' | 'contains' | 'matches'
+                 | '<' | '>' | '<=' | '>='
+Value          ::= QuotedString | UnquotedToken
+QuotedString   ::= '"' ... '"' | "'" ... "'"
 ```
+
+**Operator precedence:** `||` (OR) has lower precedence than `&&` (AND). The expression is first split on `||` to form OR-groups, then each group is split on `&&` to form AND-clauses. There is no grouping with parentheses.
 
 ### 10.3 Semantics
 
-- Clauses are AND-combined, evaluated left to right.
+#### 10.3.1 Logical Connectives
+
+- **OR (`||`):** The top-level expression is a disjunction of AND-groups. The expression is true if _any_ group is true.
+- **AND (`&&`):** Within each group, clauses are conjunctive. All clauses in a group must evaluate to true for the group to be true.
+- **NOT (`!`):** A `!` prefix before the key negates the entire clause result. For example, `!outcome=fail` means "NOT (outcome equals fail)". The `!` prefix is distinct from the `!=` operator -- `!` applies after the operator is evaluated.
+
+#### 10.3.2 Variable Resolution
+
 - `outcome` refers to the executing node's outcome status (`success`, `retry`, `fail`, `partial_success`).
-- `preferred_label` refers to the `preferred_label` value from the node's outcome.
-- `context.*` keys look up values from the run context. Missing keys compare as empty strings (never equal to non-empty values).
-- String comparison is exact and case-sensitive.
-- All clauses must evaluate to true for the condition to pass.
+- `preferred_label` refers to the `preferred_label` value from the node's outcome (empty string if absent).
+- `context.*` keys look up values from the run context. If the full key (including `context.` prefix) is not found, a second lookup is tried with the prefix stripped. Missing keys resolve to empty string.
+- Unqualified keys (not `outcome`, `preferred_label`, or `context.*`) are looked up directly in the context. Missing keys resolve to empty string.
+- All resolved values are coerced to strings before comparison.
+
+#### 10.3.3 Comparison Operators
+
+- **`=` (equals):** Exact, case-sensitive string comparison.
+- **`!=` (not equals):** True when the resolved value is not equal to the literal.
+- **`contains`:** True when the resolved value contains the literal as a substring (uses `String.includes()`). An empty literal always matches.
+- **`matches`:** True when the resolved value matches the literal interpreted as a JavaScript regular expression (using `RegExp.test()`). If the regex is invalid, the clause evaluates to false.
+- **`<`, `>`, `<=`, `>=` (numeric comparisons):** Both the resolved value and the literal are converted to numbers (via `Number()`). If either side is `NaN`, the clause evaluates to false. Otherwise, standard numeric comparison is performed. This supports integers, floating-point numbers, and negative numbers.
+
+#### 10.3.4 Bare Key (Truthy Check)
+
+A bare key without an operator (e.g., `context.flag` or `!context.flag`) is treated as `key != ""`. This provides a convenient truthy check: the clause is true if the resolved value is a non-empty string.
 
 ### 10.4 Variable Resolution
 
@@ -1825,26 +1854,72 @@ FUNCTION evaluate_condition(condition, outcome, context) -> Boolean:
     IF condition is empty:
         RETURN true  -- no condition means always eligible
 
-    clauses = split(condition, "&&")
-    FOR EACH clause IN clauses:
-        clause = trim(clause)
-        IF clause is empty:
-            CONTINUE
-        IF NOT evaluate_clause(clause, outcome, context):
-            RETURN false
-    RETURN true
+    -- Split into OR groups (lower precedence)
+    or_groups = split(condition, "||")
+
+    FOR EACH group IN or_groups:
+        -- Split each group into AND clauses (higher precedence)
+        and_clauses = split(group, "&&")
+        group_result = true
+
+        FOR EACH raw_clause IN and_clauses:
+            clause = trim(raw_clause)
+            IF clause is empty:
+                CONTINUE
+            IF NOT evaluate_clause(clause, outcome, context):
+                group_result = false
+                BREAK
+
+        IF group_result:
+            RETURN true  -- OR: any group passing is sufficient
+
+    RETURN false  -- no group passed
 
 
-FUNCTION evaluate_clause(clause, outcome, context) -> Boolean:
-    IF clause contains "!=":
-        (key, value) = split(clause, "!=", max=1)
-        RETURN resolve_key(trim(key), outcome, context) != trim(value)
-    ELSE IF clause contains "=":
-        (key, value) = split(clause, "=", max=1)
-        RETURN resolve_key(trim(key), outcome, context) == trim(value)
-    ELSE:
-        -- Bare key: check if truthy
-        RETURN bool(resolve_key(trim(clause), outcome, context))
+FUNCTION evaluate_clause(raw, outcome, context) -> Boolean:
+    text = trim(raw)
+
+    -- Handle NOT prefix (but not != operator)
+    negated = false
+    IF text starts with "!" AND character after "!" is not "=":
+        negated = true
+        text = trim(text without leading "!")
+
+    -- Try operators in precedence order:
+    --   keyword:  contains, matches
+    --   multi-char: <=, >=, !=
+    --   single-char: <, >, =
+    (key, operator, value) = parse_operator(text)
+
+    IF no operator found:
+        -- Bare key: truthy check (key != "")
+        result = resolve_key(text, outcome, context) != ""
+        RETURN negated ? NOT result : result
+
+    resolved = resolve_key(key, outcome, context)
+    value = strip_quotes(value)
+
+    SWITCH operator:
+        CASE "=":
+            result = resolved == value
+        CASE "!=":
+            result = resolved != value
+        CASE "contains":
+            result = resolved.includes(value)
+        CASE "matches":
+            TRY:
+                result = RegExp(value).test(resolved)
+            CATCH:
+                result = false
+        CASE "<", ">", "<=", ">=":
+            num_resolved = to_number(resolved)
+            num_value = to_number(value)
+            IF either is NaN:
+                result = false
+            ELSE:
+                result = num_resolved <operator> num_value
+
+    RETURN negated ? NOT result : result
 ```
 
 ### 10.6 Examples
@@ -1864,19 +1939,40 @@ review -> iterate [condition="context.loop_state!=exhausted"]
 
 -- Route based on preferred label
 gate -> fix [condition="preferred_label=Fix"]
+
+-- OR: accept multiple outcome values
+check -> proceed [condition="outcome=success || outcome=partial_success"]
+
+-- NOT: negate a clause
+review -> skip [condition="!outcome=fail"]
+
+-- contains: substring matching
+classify -> handle_error [condition="context.message contains \"error\""]
+
+-- matches: regex matching
+route -> legacy [condition="context.version matches \"^1\\.\""]
+
+-- Numeric comparison: retry budget
+retry -> give_up [condition="context.retries >= 5"]
+
+-- Combined: AND with numeric and string operators
+deploy -> rollback [condition="outcome=fail && context.error_count > 3"]
+
+-- Mixed AND/OR precedence
+-- (outcome=success AND tests pass) OR (outcome=partial_success)
+verify -> next [condition="outcome=success && context.tests_passed=true || outcome=partial_success"]
+
+-- NOT with contains
+filter -> accept [condition="!context.tags contains \"skip\""]
 ```
 
-### 10.7 Extended Operators (Future)
+### 10.7 Validation
 
-The current condition language supports only `=` (equals) and `!=` (not equals) with AND (`&&`) conjunction. Future versions may add:
+The `validateConditionSyntax()` function checks that a condition string parses correctly:
 
-- `contains` -- substring or set membership
-- `matches` -- regular expression matching
-- `OR` -- disjunction
-- `NOT` -- negation
-- `>`, `<`, `>=`, `<=` -- numeric comparison
-
-These are documented here as potential extensions. Implementations should not add them without updating the grammar and validation rules.
+- All clauses must have a non-empty key.
+- The `matches` operator validates that its value is a syntactically valid JavaScript regular expression. Invalid regexes produce a validation error.
+- Unknown operators or malformed clauses produce parse errors.
 
 ---
 
@@ -1971,10 +2067,19 @@ This section defines how to validate that an implementation of this spec is comp
 - [ ] `=` (equals) operator works for string comparison
 - [ ] `!=` (not equals) operator works
 - [ ] `&&` (AND) conjunction works with multiple clauses
+- [ ] `||` (OR) disjunction works -- any group passing makes the expression true
+- [ ] `!` (NOT) prefix negates individual clauses
+- [ ] `contains` operator checks substring membership
+- [ ] `matches` operator tests against a JavaScript regular expression
+- [ ] `<`, `>`, `<=`, `>=` numeric comparisons work (NaN on either side yields false)
+- [ ] AND/OR precedence: `&&` binds tighter than `||`
+- [ ] Bare key (no operator) is treated as truthy check (key != "")
 - [ ] `outcome` variable resolves to the current node's outcome status
 - [ ] `preferred_label` variable resolves to the outcome's preferred label
 - [ ] `context.*` variables resolve to context values (missing keys = empty string)
+- [ ] Unqualified keys are looked up directly in the context
 - [ ] Empty condition always evaluates to true (unconditional edge)
+- [ ] `validateConditionSyntax()` rejects invalid regex in `matches` operator
 
 ### 11.10 Model Stylesheet
 
@@ -1989,7 +2094,7 @@ This section defines how to validate that an implementation of this spec is comp
 
 - [ ] AST transforms can modify the Graph between parsing and validation
 - [ ] Transform interface: `transform(graph) -> graph`
-- [ ] Built-in variable expansion transform expands all declared `$variables` in prompts and labels
+- [ ] Built-in variable expansion transform expands all declared `$variables` in prompts, labels, tool_command, pre_hook, and post_hook
 - [ ] Variables declared via `graph [vars="name, name=default"]` with optional defaults
 - [ ] Runtime overrides via `--set key=value` CLI flag take precedence over defaults
 - [ ] `$goal` is implicitly declared when `graph[goal]` is set

@@ -992,3 +992,219 @@ describe("Integration: Pipeline Variables", () => {
     expect(graph.getNode("plan").prompt).toBe("Plan $feature");
   });
 });
+
+describe("Integration: Preamble Transform (spec §9.2)", () => {
+  it("prepends preamble when fidelity is compact", async () => {
+    const { graph } = preparePipeline(`
+      digraph PreambleTest {
+        graph [goal="Test preamble", default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [type="ctx_setter", prompt="Do A"]
+        b [type="prompt_capture", prompt="Do B"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    let capturedPrompt = "";
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("ctx_setter", {
+      async execute(node, _ctx, _graph, _logsRoot) {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { "project.name": "Widget", last_stage: node.id },
+        };
+      },
+    });
+
+    runner.registerHandler("prompt_capture", {
+      async execute(node, _ctx, _graph, logsRoot) {
+        // Read the prompt file that the CodergenHandler would have written
+        // Since we override the handler, we need a different approach.
+        // Instead, use the default codergen handler and capture the prompt from logs.
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    // Use a custom backend to capture the prompt as seen by the LLM
+    const result = await new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(_node, prompt, _context) {
+          capturedPrompt = prompt;
+          return "ok";
+        },
+      },
+    }).run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // The prompt for node "b" should contain a preamble with context
+    expect(capturedPrompt).toContain("Context from previous stages");
+    expect(capturedPrompt).toContain("Do B");
+  });
+
+  it("does not prepend preamble when fidelity is full", async () => {
+    const { graph } = preparePipeline(`
+      digraph NoPreamble {
+        graph [goal="Test no preamble", default_fidelity="full"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        b [prompt="Do B"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    const prompts: string[] = [];
+    const result = await new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(_node, prompt, _context) {
+          prompts.push(prompt);
+          return "ok";
+        },
+      },
+    }).run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // With full fidelity, no preamble should be prepended
+    const lastPrompt = prompts[prompts.length - 1]!;
+    expect(lastPrompt).not.toContain("Context from previous stages");
+  });
+
+  it("preamble content reflects fidelity-filtered snapshot", async () => {
+    const { graph } = preparePipeline(`
+      digraph PreambleContent {
+        graph [goal="Test preamble content", default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [prompt="Do A"]
+        b [prompt="Do B"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    let capturedPrompt = "";
+    const result = await new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node, prompt, _context) {
+          if (node.id === "b") capturedPrompt = prompt;
+          return "ok";
+        },
+      },
+    }).run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // Compact mode filters out internal.* keys — preamble should not contain them
+    expect(capturedPrompt).toContain("Context from previous stages");
+    expect(capturedPrompt).not.toContain("internal.");
+  });
+});
+
+describe("Integration: Fan-in LLM evaluation (spec §4.9)", () => {
+  it("calls backend when fan-in node has a prompt", async () => {
+    const { graph } = preparePipeline(`
+      digraph FanInLLM {
+        graph [goal="Test fan-in LLM eval"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out"]
+        branch_a [type="succeed", label="Branch A"]
+        branch_b [type="succeed", label="Branch B"]
+        fan_in [shape=tripleoctagon, label="Fan In", prompt="Evaluate which branch produced better results"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    let fanInPrompt = "";
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node, prompt, _context) {
+          if (node.id === "fan_in") {
+            fanInPrompt = prompt;
+            return "Candidate 1 is best";
+          }
+          return "ok";
+        },
+      },
+    });
+
+    runner.registerHandler("succeed", {
+      async execute(_node, _ctx, _graph, _logsRoot) {
+        return { status: StageStatus.SUCCESS, notes: "Branch succeeded" };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // The backend should have been called for the fan-in node
+    expect(fanInPrompt).toContain("Evaluate which branch produced better results");
+    expect(fanInPrompt).toContain("Candidates");
+    expect(fanInPrompt).toContain("Candidate 1");
+    expect(fanInPrompt).toContain("Candidate 2");
+    // LLM evaluation result should be in context
+    expect(result.context.getString("parallel.fan_in.llm_evaluation")).toBe(
+      "Candidate 1 is best",
+    );
+  });
+
+  it("uses heuristic when fan-in node has no prompt", async () => {
+    const { graph } = preparePipeline(`
+      digraph FanInHeuristic {
+        graph [goal="Test fan-in heuristic"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out"]
+        branch_a [type="succeed", label="Branch A"]
+        branch_b [type="fail_branch", label="Branch B"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    let backendCalledForFanIn = false;
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node, _prompt, _context) {
+          if (node.id === "fan_in") backendCalledForFanIn = true;
+          return "ok";
+        },
+      },
+    });
+
+    runner.registerHandler("succeed", {
+      async execute(_node, _ctx, _graph, _logsRoot) {
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    runner.registerHandler("fail_branch", {
+      async execute(_node, _ctx, _graph, _logsRoot) {
+        return { status: StageStatus.FAIL, failureReason: "Intentional failure" };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // Backend should NOT have been called for the fan-in node (no prompt)
+    expect(backendCalledForFanIn).toBe(false);
+    // Heuristic should have picked the SUCCESS candidate
+    expect(result.context.getString("parallel.fan_in.best_outcome")).toBe("success");
+  });
+});

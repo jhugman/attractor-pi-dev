@@ -394,6 +394,89 @@ describe("Prompt Resolution: transform ordering", () => {
   });
 });
 
+describe("Prompt Resolution: tool attributes (@file and /command)", () => {
+  it("@file in tool_command resolves to file contents", () => {
+    const scriptContent = "#!/bin/bash\necho hello";
+    fs.writeFileSync(path.join(tmpDir, "run.sh"), scriptContent);
+
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(dotPath, `
+      digraph Test {
+        graph [goal="Test tool attr resolution"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work  [shape=parallelogram, type="tool", tool_command="@run.sh"]
+        start -> work -> exit
+      }
+    `);
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, { dotFilePath: dotPath });
+
+    expect(graph.getNode("work").attrs["tool_command"]).toBe(scriptContent);
+  });
+
+  it("@file in pre_hook resolves to file contents", () => {
+    const hookContent = "echo setting up";
+    fs.writeFileSync(path.join(tmpDir, "setup.sh"), hookContent);
+
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(dotPath, `
+      digraph Test {
+        graph [goal="Test pre_hook resolution"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work  [shape=parallelogram, type="tool", tool_command="echo hi", pre_hook="@setup.sh"]
+        start -> work -> exit
+      }
+    `);
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, { dotFilePath: dotPath });
+
+    expect(graph.getNode("work").attrs["pre_hook"]).toBe(hookContent);
+  });
+
+  it("@file in post_hook resolves to file contents", () => {
+    const hookContent = "echo cleaning up";
+    fs.writeFileSync(path.join(tmpDir, "teardown.sh"), hookContent);
+
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(dotPath, `
+      digraph Test {
+        graph [goal="Test post_hook resolution"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work  [shape=parallelogram, type="tool", tool_command="echo hi", post_hook="@teardown.sh"]
+        start -> work -> exit
+      }
+    `);
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, { dotFilePath: dotPath });
+
+    expect(graph.getNode("work").attrs["post_hook"]).toBe(hookContent);
+  });
+
+  it("tool_command without @ or / prefix is left unchanged", () => {
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(dotPath, `
+      digraph Test {
+        graph [goal="Test tool attr no resolution"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work  [shape=parallelogram, type="tool", tool_command="echo hello"]
+        start -> work -> exit
+      }
+    `);
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, { dotFilePath: dotPath });
+
+    expect(graph.getNode("work").attrs["tool_command"]).toBe("echo hello");
+  });
+});
+
 describe("Prompt Resolution: validation diagnostics", () => {
   it("prompt_file_exists diagnostic includes file path", () => {
     const dotPath = path.join(tmpDir, "pipeline.dot");

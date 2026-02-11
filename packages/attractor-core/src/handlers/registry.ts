@@ -35,7 +35,7 @@ export class HandlerRegistry {
     this.register("codergen", new CodergenHandler(backend));
     this.register("wait.human", new WaitForHumanHandler(interviewer));
     this.register("parallel", new ParallelHandler());
-    this.register("parallel.fan_in", new FanInHandler());
+    this.register("parallel.fan_in", new FanInHandler(backend));
     this.register("tool", new ToolHandler());
     this.register("stack.manager_loop", new ManagerLoopHandler());
   }
