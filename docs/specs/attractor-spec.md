@@ -1982,131 +1982,131 @@ This section defines how to validate that an implementation of this spec is comp
 
 ### 11.1 DOT Parsing
 
-- [ ] Parser accepts the supported DOT subset (digraph with graph/node/edge attribute blocks)
-- [ ] Graph-level attributes (`goal`, `label`, `model_stylesheet`) are extracted correctly
-- [ ] Node attributes are parsed including multi-line attribute blocks (attributes spanning multiple lines within `[...]`)
-- [ ] Edge attributes (`label`, `condition`, `weight`) are parsed correctly
-- [ ] Chained edges (`A -> B -> C`) produce individual edges for each pair
-- [ ] Node/edge default blocks (`node [...]`, `edge [...]`) apply to subsequent declarations
-- [ ] Subgraph blocks are flattened (contents kept, wrapper removed)
-- [ ] `class` attribute on nodes merges in attributes from the stylesheet
-- [ ] Quoted and unquoted attribute values both work
-- [ ] Comments (`//` and `/* */`) are stripped before parsing
+- [x] Parser accepts the supported DOT subset (digraph with graph/node/edge attribute blocks)
+- [x] Graph-level attributes (`goal`, `label`, `model_stylesheet`) are extracted correctly
+- [x] Node attributes are parsed including multi-line attribute blocks (attributes spanning multiple lines within `[...]`)
+- [x] Edge attributes (`label`, `condition`, `weight`) are parsed correctly
+- [x] Chained edges (`A -> B -> C`) produce individual edges for each pair
+- [x] Node/edge default blocks (`node [...]`, `edge [...]`) apply to subsequent declarations
+- [x] Subgraph blocks are flattened (contents kept, wrapper removed)
+- [x] `class` attribute on nodes merges in attributes from the stylesheet
+- [x] Quoted and unquoted attribute values both work
+- [x] Comments (`//` and `/* */`) are stripped before parsing
 
 ### 11.2 Validation and Linting
 
-- [ ] Exactly one start node (shape=Mdiamond) is required
-- [ ] Exactly one exit node (shape=Msquare) is required
-- [ ] Start node has no incoming edges
-- [ ] Exit node has no outgoing edges
-- [ ] All nodes are reachable from start (no orphans)
-- [ ] All edges reference valid node IDs
-- [ ] Codergen nodes (shape=box) have non-empty `prompt` attribute (warning if missing)
-- [ ] Condition expressions on edges parse without errors
-- [ ] `validate_or_raise()` throws on error-severity violations
-- [ ] Lint results include rule name, severity (error/warning), node/edge ID, and message
+- [x] Exactly one start node (shape=Mdiamond) is required
+- [x] Exactly one exit node (shape=Msquare) is required
+- [x] Start node has no incoming edges
+- [x] Exit node has no outgoing edges
+- [x] All nodes are reachable from start (no orphans)
+- [x] All edges reference valid node IDs
+- [x] Codergen nodes (shape=box) have non-empty `prompt` attribute (warning if missing)
+- [x] Condition expressions on edges parse without errors
+- [x] `validate_or_raise()` throws on error-severity violations
+- [x] Lint results include rule name, severity (error/warning), node/edge ID, and message
 
 ### 11.3 Execution Engine
 
-- [ ] Engine resolves the start node and begins execution there
-- [ ] Each node's handler is resolved via shape-to-handler-type mapping
-- [ ] Handler is called with (node, context, graph, logs_root) and returns an Outcome
-- [ ] Outcome is written to `{logs_root}/{node_id}/status.json`
-- [ ] Edge selection follows the 5-step priority: condition match -> preferred label -> suggested IDs -> weight -> lexical
-- [ ] Engine loops: execute node -> select edge -> advance to next node -> repeat
-- [ ] Terminal node (shape=Msquare) stops execution
-- [ ] Pipeline outcome is "success" if all goal_gate nodes succeeded, "fail" otherwise
+- [x] Engine resolves the start node and begins execution there
+- [x] Each node's handler is resolved via shape-to-handler-type mapping
+- [x] Handler is called with (node, context, graph, logs_root) and returns an Outcome
+- [x] Outcome is written to `{logs_root}/{node_id}/status.json`
+- [x] Edge selection follows the 5-step priority: condition match -> preferred label -> suggested IDs -> weight -> lexical
+- [x] Engine loops: execute node -> select edge -> advance to next node -> repeat
+- [x] Terminal node (shape=Msquare) stops execution
+- [x] Pipeline outcome is "success" if all goal_gate nodes succeeded, "fail" otherwise
 
 ### 11.4 Goal Gate Enforcement
 
-- [ ] Nodes with `goal_gate=true` are tracked throughout execution
-- [ ] Before allowing exit via a terminal node, the engine checks all goal gate nodes have status SUCCESS
-- [ ] If any goal gate node has not succeeded, the engine routes to `retry_target` (if configured) instead of exiting
-- [ ] If no retry_target and goal gates unsatisfied, pipeline outcome is "fail"
+- [x] Nodes with `goal_gate=true` are tracked throughout execution
+- [x] Before allowing exit via a terminal node, the engine checks all goal gate nodes have status SUCCESS
+- [x] If any goal gate node has not succeeded, the engine routes to `retry_target` (if configured) instead of exiting
+- [x] If no retry_target and goal gates unsatisfied, pipeline outcome is "fail"
 
 ### 11.5 Retry Logic
 
-- [ ] Nodes with `max_retries > 0` are retried on RETRY or FAIL outcomes
-- [ ] Retry count is tracked per-node and respects the configured limit
-- [ ] Backoff between retries works (constant, linear, or exponential as configured)
-- [ ] Jitter is applied to backoff delays when configured
-- [ ] After retry exhaustion, the node's final outcome is used for edge selection
+- [x] Nodes with `max_retries > 0` are retried on RETRY or FAIL outcomes
+- [x] Retry count is tracked per-node and respects the configured limit
+- [x] Backoff between retries works (constant, linear, or exponential as configured)
+- [x] Jitter is applied to backoff delays when configured
+- [x] After retry exhaustion, the node's final outcome is used for edge selection
 
 ### 11.6 Node Handlers
 
-- [ ] **Start handler:** Returns SUCCESS immediately (no-op)
-- [ ] **Exit handler:** Returns SUCCESS immediately (no-op, engine checks goal gates)
-- [ ] **Codergen handler:** Expands `$goal` in prompt, calls `CodergenBackend.run()`, writes prompt.md and response.md to stage dir
-- [ ] **Wait.human handler:** Presents outgoing edge labels as choices to the interviewer, returns selected label as preferred_label
-- [ ] **Conditional handler:** Passes through; engine evaluates edge conditions against outcome/context
-- [ ] **Parallel handler:** Fans out to multiple target nodes concurrently (or sequentially as fallback)
-- [ ] **Fan-in handler:** Waits for all parallel branches to complete before proceeding
-- [ ] **Tool handler:** Executes configured tool/command and returns result
-- [ ] Custom handlers can be registered by type string
+- [x] **Start handler:** Returns SUCCESS immediately (no-op)
+- [x] **Exit handler:** Returns SUCCESS immediately (no-op, engine checks goal gates)
+- [x] **Codergen handler:** Expands `$goal` in prompt, calls `CodergenBackend.run()`, writes prompt.md and response.md to stage dir
+- [x] **Wait.human handler:** Presents outgoing edge labels as choices to the interviewer, returns selected label as preferred_label
+- [x] **Conditional handler:** Passes through; engine evaluates edge conditions against outcome/context
+- [x] **Parallel handler:** Fans out to multiple target nodes concurrently (or sequentially as fallback)
+- [x] **Fan-in handler:** Waits for all parallel branches to complete before proceeding
+- [x] **Tool handler:** Executes configured tool/command and returns result
+- [x] Custom handlers can be registered by type string
 
 ### 11.7 State and Context
 
-- [ ] Context is a key-value store accessible to all handlers
-- [ ] Handlers can read context and return `context_updates` in the Outcome
-- [ ] Context updates are merged after each node execution
-- [ ] Checkpoint is saved after each node completion (current_node, completed_nodes, context, retry counts)
-- [ ] Resume from checkpoint: load checkpoint -> restore state -> continue from current_node
-- [ ] Artifacts are written to `{logs_root}/{node_id}/` (prompt.md, response.md, status.json)
+- [x] Context is a key-value store accessible to all handlers
+- [x] Handlers can read context and return `context_updates` in the Outcome
+- [x] Context updates are merged after each node execution
+- [x] Checkpoint is saved after each node completion (current_node, completed_nodes, context, retry counts)
+- [x] Resume from checkpoint: load checkpoint -> restore state -> continue from current_node
+- [x] Artifacts are written to `{logs_root}/{node_id}/` (prompt.md, response.md, status.json)
 
 ### 11.8 Human-in-the-Loop
 
-- [ ] Interviewer interface works: `ask(question) -> Answer`
-- [ ] Question supports types: SINGLE_SELECT, MULTI_SELECT, FREE_TEXT, CONFIRM
-- [ ] AutoApproveInterviewer always selects the first option (for automation/testing)
-- [ ] ConsoleInterviewer prompts in terminal and reads user input
-- [ ] CallbackInterviewer delegates to a provided function
-- [ ] QueueInterviewer reads from a pre-filled answer queue (for testing)
+- [x] Interviewer interface works: `ask(question) -> Answer`
+- [x] Question supports types: SINGLE_SELECT, MULTI_SELECT, FREE_TEXT, CONFIRM
+- [x] AutoApproveInterviewer always selects the first option (for automation/testing)
+- [x] ConsoleInterviewer prompts in terminal and reads user input
+- [x] CallbackInterviewer delegates to a provided function
+- [x] QueueInterviewer reads from a pre-filled answer queue (for testing)
 
 ### 11.9 Condition Expressions
 
-- [ ] `=` (equals) operator works for string comparison
-- [ ] `!=` (not equals) operator works
-- [ ] `&&` (AND) conjunction works with multiple clauses
-- [ ] `||` (OR) disjunction works -- any group passing makes the expression true
-- [ ] `!` (NOT) prefix negates individual clauses
-- [ ] `contains` operator checks substring membership
-- [ ] `matches` operator tests against a JavaScript regular expression
-- [ ] `<`, `>`, `<=`, `>=` numeric comparisons work (NaN on either side yields false)
-- [ ] AND/OR precedence: `&&` binds tighter than `||`
-- [ ] Bare key (no operator) is treated as truthy check (key != "")
-- [ ] `outcome` variable resolves to the current node's outcome status
-- [ ] `preferred_label` variable resolves to the outcome's preferred label
-- [ ] `context.*` variables resolve to context values (missing keys = empty string)
-- [ ] Unqualified keys are looked up directly in the context
-- [ ] Empty condition always evaluates to true (unconditional edge)
-- [ ] `validateConditionSyntax()` rejects invalid regex in `matches` operator
+- [x] `=` (equals) operator works for string comparison
+- [x] `!=` (not equals) operator works
+- [x] `&&` (AND) conjunction works with multiple clauses
+- [x] `||` (OR) disjunction works -- any group passing makes the expression true
+- [x] `!` (NOT) prefix negates individual clauses
+- [x] `contains` operator checks substring membership
+- [x] `matches` operator tests against a JavaScript regular expression
+- [x] `<`, `>`, `<=`, `>=` numeric comparisons work (NaN on either side yields false)
+- [x] AND/OR precedence: `&&` binds tighter than `||`
+- [x] Bare key (no operator) is treated as truthy check (key != "")
+- [x] `outcome` variable resolves to the current node's outcome status
+- [x] `preferred_label` variable resolves to the outcome's preferred label
+- [x] `context.*` variables resolve to context values (missing keys = empty string)
+- [x] Unqualified keys are looked up directly in the context
+- [x] Empty condition always evaluates to true (unconditional edge)
+- [x] `validateConditionSyntax()` rejects invalid regex in `matches` operator
 
 ### 11.10 Model Stylesheet
 
-- [ ] Stylesheet is parsed from the graph's `model_stylesheet` attribute
-- [ ] Selectors by shape name work (e.g., `box { model = "claude-opus-4-6" }`)
-- [ ] Selectors by class name work (e.g., `.fast { model = "gemini-3-flash-preview" }`)
-- [ ] Selectors by node ID work (e.g., `#review { reasoning_effort = "high" }`)
-- [ ] Specificity order: universal < shape < class < ID
-- [ ] Stylesheet properties are overridden by explicit node attributes
+- [x] Stylesheet is parsed from the graph's `model_stylesheet` attribute
+- [x] Selectors by shape name work (e.g., `box { model = "claude-opus-4-6" }`)
+- [x] Selectors by class name work (e.g., `.fast { model = "gemini-3-flash-preview" }`)
+- [x] Selectors by node ID work (e.g., `#review { reasoning_effort = "high" }`)
+- [x] Specificity order: universal < shape < class < ID
+- [x] Stylesheet properties are overridden by explicit node attributes
 
 ### 11.11 Transforms and Extensibility
 
-- [ ] AST transforms can modify the Graph between parsing and validation
-- [ ] Transform interface: `transform(graph) -> graph`
-- [ ] Built-in variable expansion transform expands all declared `$variables` in prompts, labels, tool_command, pre_hook, and post_hook
-- [ ] Variables declared via `graph [vars="name, name=default"]` with optional defaults
-- [ ] Runtime overrides via `--set key=value` CLI flag take precedence over defaults
-- [ ] `$goal` is implicitly declared when `graph[goal]` is set
-- [ ] `vars_declared` validation rule catches undeclared `$variable` references
-- [ ] Prompt resolution: `@path` includes file relative to DOT file
-- [ ] Prompt resolution: `/command args` searches `.attractor/commands/` path with `:` as directory separator
-- [ ] Prompt resolution: `ATTRACTOR_COMMANDS_PATH` env var adds extra search directories
-- [ ] Prompt resolution: `$ARGUMENTS` substituted from command args, implicitly declared
-- [ ] `prompt_file_exists` validation catches missing `@` file references
-- [ ] `prompt_command_exists` validation catches unresolvable `/command` references
-- [ ] Custom transforms can be registered and run in order
-- [ ] HTTP server mode (if implemented): POST /run starts pipeline, GET /status checks state, POST /answer submits human input
+- [x] AST transforms can modify the Graph between parsing and validation
+- [x] Transform interface: `transform(graph) -> graph`
+- [x] Built-in variable expansion transform expands all declared `$variables` in prompts, labels, tool_command, pre_hook, and post_hook
+- [x] Variables declared via `graph [vars="name, name=default"]` with optional defaults
+- [x] Runtime overrides via `--set key=value` CLI flag take precedence over defaults
+- [x] `$goal` is implicitly declared when `graph[goal]` is set
+- [x] `vars_declared` validation rule catches undeclared `$variable` references
+- [x] Prompt resolution: `@path` includes file relative to DOT file
+- [x] Prompt resolution: `/command args` searches `.attractor/commands/` path with `:` as directory separator
+- [x] Prompt resolution: `ATTRACTOR_COMMANDS_PATH` env var adds extra search directories
+- [x] Prompt resolution: `$ARGUMENTS` substituted from command args, implicitly declared
+- [x] `prompt_file_exists` validation catches missing `@` file references
+- [x] `prompt_command_exists` validation catches unresolvable `/command` references
+- [x] Custom transforms can be registered and run in order
+- [x] HTTP server mode (if implemented): POST /run starts pipeline, GET /status checks state, POST /answer submits human input
 
 ### 11.12 Cross-Feature Parity Matrix
 
@@ -2114,35 +2114,35 @@ Run this validation matrix -- each cell must pass:
 
 | Test Case                                        | Pass |
 |--------------------------------------------------|------|
-| Parse a simple linear pipeline (start -> A -> B -> done) | [ ] |
-| Parse a pipeline with graph-level attributes (goal, label) | [ ] |
-| Parse multi-line node attributes                 | [ ] |
-| Validate: missing start node -> error            | [ ] |
-| Validate: missing exit node -> error             | [ ] |
-| Validate: orphan node -> warning                 | [ ] |
-| Execute a linear 3-node pipeline end-to-end      | [ ] |
-| Execute with conditional branching (success/fail paths) | [ ] |
-| Execute with retry on failure (max_retries=2)    | [ ] |
-| Goal gate blocks exit when unsatisfied            | [ ] |
-| Goal gate allows exit when all satisfied          | [ ] |
-| Wait.human presents choices and routes on selection | [ ] |
-| Edge selection: condition match wins over weight  | [ ] |
-| Edge selection: weight breaks ties for unconditional edges | [ ] |
-| Edge selection: lexical tiebreak as final fallback | [ ] |
-| Context updates from one node are visible to the next | [ ] |
-| Checkpoint save and resume produces same result   | [ ] |
-| Stylesheet applies model override to nodes by shape | [ ] |
-| Prompt variable expansion ($goal) works           | [ ] |
-| General $variable expansion with vars + --set works | [ ] |
-| Undeclared $variable in prompt raises validation error | [ ] |
-| @file prompt includes file content from DOT file dir | [ ] |
-| /command prompt resolves from .attractor/commands/ | [ ] |
-| /my:cmd resolves to my/cmd.md in search path      | [ ] |
-| Missing @file raises prompt_file_exists error      | [ ] |
-| Missing /command raises prompt_command_exists error | [ ] |
-| Parallel fan-out and fan-in complete correctly    | [ ] |
-| Custom handler registration and execution works   | [ ] |
-| Pipeline with 10+ nodes completes without errors  | [ ] |
+| Parse a simple linear pipeline (start -> A -> B -> done) | [x] |
+| Parse a pipeline with graph-level attributes (goal, label) | [x] |
+| Parse multi-line node attributes                 | [x] |
+| Validate: missing start node -> error            | [x] |
+| Validate: missing exit node -> error             | [x] |
+| Validate: orphan node -> warning                 | [x] |
+| Execute a linear 3-node pipeline end-to-end      | [x] |
+| Execute with conditional branching (success/fail paths) | [x] |
+| Execute with retry on failure (max_retries=2)    | [x] |
+| Goal gate blocks exit when unsatisfied            | [x] |
+| Goal gate allows exit when all satisfied          | [x] |
+| Wait.human presents choices and routes on selection | [x] |
+| Edge selection: condition match wins over weight  | [x] |
+| Edge selection: weight breaks ties for unconditional edges | [x] |
+| Edge selection: lexical tiebreak as final fallback | [x] |
+| Context updates from one node are visible to the next | [x] |
+| Checkpoint save and resume produces same result   | [x] |
+| Stylesheet applies model override to nodes by shape | [x] |
+| Prompt variable expansion ($goal) works           | [x] |
+| General $variable expansion with vars + --set works | [x] |
+| Undeclared $variable in prompt raises validation error | [x] |
+| @file prompt includes file content from DOT file dir | [x] |
+| /command prompt resolves from .attractor/commands/ | [x] |
+| /my:cmd resolves to my/cmd.md in search path      | [x] |
+| Missing @file raises prompt_file_exists error      | [x] |
+| Missing /command raises prompt_command_exists error | [x] |
+| Parallel fan-out and fan-in complete correctly    | [x] |
+| Custom handler registration and execution works   | [x] |
+| Pipeline with 10+ nodes completes without errors  | [x] |
 
 ### 11.13 Integration Smoke Test
 

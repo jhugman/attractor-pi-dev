@@ -1138,95 +1138,95 @@ This section defines how to validate that an implementation of this spec is comp
 
 ### 9.1 Core Loop
 
-- [ ] Session can be created with a ProviderProfile and ExecutionEnvironment
-- [ ] `process_input()` runs the agentic loop: LLM call -> tool execution -> loop until natural completion
-- [ ] Natural completion: model responds with text only (no tool calls) and the loop exits
-- [ ] Round limits: `max_tool_rounds_per_input` stops the loop when reached
-- [ ] Session turn limits: `max_turns` stops the loop across all inputs
-- [ ] Abort signal: cancellation stops the loop, kills running processes, transitions to CLOSED
-- [ ] Loop detection: consecutive identical tool call patterns trigger a warning SteeringTurn
-- [ ] Multiple sequential inputs work: submit, wait for completion, submit again
+- [x] Session can be created with a ProviderProfile and ExecutionEnvironment
+- [x] `process_input()` runs the agentic loop: LLM call -> tool execution -> loop until natural completion
+- [x] Natural completion: model responds with text only (no tool calls) and the loop exits
+- [x] Round limits: `max_tool_rounds_per_input` stops the loop when reached
+- [x] Session turn limits: `max_turns` stops the loop across all inputs
+- [x] Abort signal: cancellation stops the loop, kills running processes, transitions to CLOSED
+- [x] Loop detection: consecutive identical tool call patterns trigger a warning SteeringTurn
+- [x] Multiple sequential inputs work: submit, wait for completion, submit again
 
 ### 9.2 Provider Profiles
 
-- [ ] OpenAI profile provides codex-rs-aligned tools including `apply_patch` (v4a format)
-- [ ] Anthropic profile provides Claude Code-aligned tools including `edit_file` (old_string/new_string)
-- [ ] Gemini profile provides gemini-cli-aligned tools
-- [ ] Each profile produces a provider-specific system prompt covering identity, tool usage, and coding guidance
-- [ ] Custom tools can be registered on top of any profile
-- [ ] Tool name collisions resolved: custom registration overrides profile defaults
+- [x] OpenAI profile provides codex-rs-aligned tools including `apply_patch` (v4a format)
+- [x] Anthropic profile provides Claude Code-aligned tools including `edit_file` (old_string/new_string)
+- [x] Gemini profile provides gemini-cli-aligned tools
+- [x] Each profile produces a provider-specific system prompt covering identity, tool usage, and coding guidance
+- [x] Custom tools can be registered on top of any profile
+- [x] Tool name collisions resolved: custom registration overrides profile defaults
 
 ### 9.3 Tool Execution
 
-- [ ] Tool calls are dispatched through the ToolRegistry
-- [ ] Unknown tool calls return an error result to the LLM (not an exception)
-- [ ] Tool argument JSON is parsed and validated against the tool's parameter schema
-- [ ] Tool execution errors are caught and returned as error results (`is_error = true`)
-- [ ] Parallel tool execution works when the profile's `supports_parallel_tool_calls` is true
+- [x] Tool calls are dispatched through the ToolRegistry <!-- pi-mono handles dispatch -->
+- [x] Unknown tool calls return an error result to the LLM (not an exception) <!-- pi-mono handles this -->
+- [x] Tool argument JSON is parsed and validated against the tool's parameter schema <!-- pi-mono + typebox schemas -->
+- [x] Tool execution errors are caught and returned as error results (`is_error = true`)
+- [ ] Parallel tool execution works when the profile's `supports_parallel_tool_calls` is true <!-- flag exists on profile but Session doesn't use it; pi-mono controls parallelism internally -->
 
 ### 9.4 Execution Environment
 
-- [ ] `LocalExecutionEnvironment` implements all file and command operations
-- [ ] Command timeout default is 10 seconds
-- [ ] Command timeout is overridable per-call via the shell tool's `timeout_ms` parameter
-- [ ] Timed-out commands: process group receives SIGTERM, then SIGKILL after 2 seconds
-- [ ] Environment variable filtering excludes sensitive variables (`*_API_KEY`, `*_SECRET`, etc.) by default
-- [ ] The `ExecutionEnvironment` interface is implementable by consumers for custom environments (Docker, K8s, WASM, SSH)
+- [x] `LocalExecutionEnvironment` implements all file and command operations
+- [x] Command timeout default is 10 seconds
+- [x] Command timeout is overridable per-call via the shell tool's `timeout_ms` parameter
+- [x] Timed-out commands: process group receives SIGTERM, then SIGKILL after 2 seconds
+- [x] Environment variable filtering excludes sensitive variables (`*_API_KEY`, `*_SECRET`, etc.) by default
+- [x] The `ExecutionEnvironment` interface is implementable by consumers for custom environments (Docker, K8s, WASM, SSH)
 
 ### 9.5 Tool Output Truncation
 
-- [ ] Character-based truncation runs FIRST on all tool outputs (handles pathological cases like 10MB single-line CSVs)
-- [ ] Line-based truncation runs SECOND where configured (shell: 256, grep: 200, glob: 500)
-- [ ] Truncation inserts a visible marker: `[WARNING: Tool output was truncated. N characters removed...]`
-- [ ] The full untruncated output is available via the `TOOL_CALL_END` event
-- [ ] Default character limits match the table in Section 5.2 (read_file: 50k, shell: 30k, grep: 20k, etc.)
-- [ ] Both character and line limits are overridable via `SessionConfig`
+- [x] Character-based truncation runs FIRST on all tool outputs (handles pathological cases like 10MB single-line CSVs)
+- [x] Line-based truncation runs SECOND where configured (shell: 256, grep: 200, glob: 500)
+- [x] Truncation inserts a visible marker: `[WARNING: Tool output was truncated. N characters removed...]`
+- [x] The full untruncated output is available via the `TOOL_CALL_END` event
+- [x] Default character limits match the table in Section 5.2 (read_file: 50k, shell: 30k, grep: 20k, etc.)
+- [x] Both character and line limits are overridable via `SessionConfig`
 
 ### 9.6 Steering
 
-- [ ] `steer()` queues a message that is injected after the current tool round
-- [ ] `follow_up()` queues a message that is processed after the current input completes
-- [ ] Steering messages appear as SteeringTurn in the history
-- [ ] SteeringTurns are converted to user-role messages for the LLM
+- [x] `steer()` queues a message that is injected after the current tool round <!-- delegates to pi-mono's steer() -->
+- [x] `follow_up()` queues a message that is processed after the current input completes <!-- delegates to pi-mono's followUp() -->
+- [x] Steering messages appear as SteeringTurn in the history <!-- pi-mono handles internally -->
+- [x] SteeringTurns are converted to user-role messages for the LLM <!-- pi-mono handles internally -->
 
 ### 9.7 Reasoning Effort
 
-- [ ] `reasoning_effort` is passed through to the LLM SDK Request
-- [ ] Changing `reasoning_effort` mid-session takes effect on the next LLM call
-- [ ] Valid values: "low", "medium", "high", null (provider default) (certain providers might have other options like `xhigh`)
+- [x] `reasoning_effort` is passed through to the LLM SDK Request <!-- mapped to pi-mono ThinkingLevel -->
+- [x] Changing `reasoning_effort` mid-session takes effect on the next LLM call <!-- setReasoningEffort() calls setThinkingLevel() -->
+- [x] Valid values: "low", "medium", "high", null (provider default) (certain providers might have other options like `xhigh`) <!-- pi-mono ThinkingLevel also has "off"; null maps to profile default -->
 
 ### 9.8 System Prompts
 
-- [ ] System prompt includes provider-specific base instructions
-- [ ] System prompt includes environment context (platform, git, working dir, date, model info)
-- [ ] System prompt includes tool descriptions from the active profile
-- [ ] Project documentation files (AGENTS.md + provider-specific files) are discovered and included
-- [ ] User instruction overrides are appended last (highest priority)
-- [ ] Only relevant project files are loaded (e.g., Anthropic profile loads CLAUDE.md, not GEMINI.md)
+- [x] System prompt includes provider-specific base instructions
+- [x] System prompt includes environment context (platform, git, working dir, date, model info)
+- [x] System prompt includes tool descriptions from the active profile <!-- pi-mono injects tool descriptions internally when tools are set on the agent -->
+- [x] Project documentation files (AGENTS.md + provider-specific files) are discovered and included
+- [x] User instruction overrides are appended last (highest priority)
+- [x] Only relevant project files are loaded (e.g., Anthropic profile loads CLAUDE.md, not GEMINI.md)
 
 ### 9.9 Subagents
 
-- [ ] Subagents can be spawned with a scoped task via the `spawn_agent` tool
-- [ ] Subagents share the parent's execution environment (same filesystem)
-- [ ] Subagents maintain independent conversation history
-- [ ] Depth limiting prevents recursive spawning (default max depth: 1)
-- [ ] Subagent results are returned to the parent as tool results
-- [ ] `send_input`, `wait`, and `close_agent` tools work correctly
+- [x] Subagents can be spawned with a scoped task via the `spawn_agent` tool
+- [x] Subagents share the parent's execution environment (same filesystem)
+- [x] Subagents maintain independent conversation history
+- [x] Depth limiting prevents recursive spawning (default max depth: 1)
+- [x] Subagent results are returned to the parent as tool results
+- [x] `send_input`, `wait`, and `close_agent` tools work correctly
 
 ### 9.10 Event System
 
-- [ ] All event kinds listed in Section 2.9 are emitted at the correct times
-- [ ] Events are delivered via async iterator or language-appropriate equivalent
-- [ ] `TOOL_CALL_END` events carry full untruncated tool output
-- [ ] Session lifecycle events (SESSION_START, SESSION_END) bracket the session
+- [x] All event kinds listed in Section 2.9 are emitted at the correct times <!-- all 12+ event kinds implemented in handleAgentEvent() -->
+- [x] Events are delivered via async iterator or language-appropriate equivalent <!-- uses callback-based subscribe() pattern, idiomatic for TypeScript -->
+- [x] `TOOL_CALL_END` events carry full untruncated tool output <!-- rawToolOutputs map stores pre-truncation output -->
+- [x] Session lifecycle events (SESSION_START, SESSION_END) bracket the session
 
 ### 9.11 Error Handling
 
-- [ ] Tool execution errors -> error result sent to LLM (model can recover)
-- [ ] LLM API transient errors (429, 500-503) -> retry with backoff (handled by Unified LLM SDK layer)
-- [ ] Authentication errors -> surface immediately, no retry, session transitions to CLOSED
-- [ ] Context window overflow -> emit warning event (no automatic compaction)
-- [ ] Graceful shutdown: abort signal -> cancel LLM stream -> kill running processes -> flush events -> emit SESSION_END
+- [x] Tool execution errors -> error result sent to LLM (model can recover)
+- [x] LLM API transient errors (429, 500-503) -> retry with backoff (handled by Unified LLM SDK layer) <!-- delegated to pi-mono which handles retries internally -->
+- [x] Authentication errors -> surface immediately, no retry, session transitions to CLOSED <!-- isUnrecoverableError() detects auth patterns -->
+- [ ] Context window overflow -> emit warning event (no automatic compaction) <!-- isUnrecoverableError() transitions to CLOSED instead of emitting a warning then continuing; no 80% warning threshold implemented -->
+- [ ] Graceful shutdown: abort signal -> cancel LLM stream -> kill running processes -> flush events -> emit SESSION_END <!-- abort() cancels via pi-mono but does not follow the full 8-step shutdown sequence (no explicit SIGTERM to running processes, no subagent cleanup) -->
 
 ### 9.12 Cross-Provider Parity Matrix
 
@@ -1234,21 +1234,21 @@ Run this validation matrix -- each cell must pass:
 
 | Test Case                                    | OpenAI | Anthropic | Gemini |
 |----------------------------------------------|--------|-----------|--------|
-| Simple file creation task                    | [ ]    | [ ]       | [ ]    |
-| Read file, then edit it                      | [ ]    | [ ]       | [ ]    |
-| Multi-file edit in one session               | [ ]    | [ ]       | [ ]    |
-| Shell command execution                      | [ ]    | [ ]       | [ ]    |
-| Shell command timeout handling               | [ ]    | [ ]       | [ ]    |
-| Grep + glob to find files                    | [ ]    | [ ]       | [ ]    |
-| Multi-step task (read -> analyze -> edit)    | [ ]    | [ ]       | [ ]    |
-| Tool output truncation (large file)          | [ ]    | [ ]       | [ ]    |
+| Simple file creation task                    | [ ]    | [x]       | [ ]    |
+| Read file, then edit it                      | [ ]    | [x]       | [ ]    |
+| Multi-file edit in one session               | [ ]    | [x]       | [ ]    |
+| Shell command execution                      | [ ]    | [x]       | [ ]    |
+| Shell command timeout handling               | [ ]    | [x]       | [ ]    |
+| Grep + glob to find files                    | [ ]    | [x]       | [ ]    |
+| Multi-step task (read -> analyze -> edit)    | [ ]    | [x]       | [ ]    |
+| Tool output truncation (large file)          | [ ]    | [x]       | [ ]    |
 | Parallel tool calls (if supported)           | [ ]    | [ ]       | [ ]    |
-| Steering mid-task                            | [ ]    | [ ]       | [ ]    |
-| Reasoning effort change                      | [ ]    | [ ]       | [ ]    |
-| Subagent spawn and wait                      | [ ]    | [ ]       | [ ]    |
-| Loop detection triggers warning              | [ ]    | [ ]       | [ ]    |
-| Error recovery (tool fails, model retries)   | [ ]    | [ ]       | [ ]    |
-| Provider-specific editing format works       | [ ]    | [ ]       | [ ]    |
+| Steering mid-task                            | [ ]    | [x]       | [ ]    |
+| Reasoning effort change                      | [ ]    | [x]       | [ ]    |
+| Subagent spawn and wait                      | [ ]    | [x]       | [ ]    |
+| Loop detection triggers warning              | [ ]    | [x]       | [ ]    |
+| Error recovery (tool fails, model retries)   | [ ]    | [x]       | [ ]    |
+| Provider-specific editing format works       | [ ]    | [x]       | [ ]    |
 
 ### 9.13 Integration Smoke Test
 

@@ -1970,63 +1970,75 @@ This section defines how to validate that an implementation of this spec is comp
 
 ### 8.1 Core Infrastructure
 
-- [ ] `Client` can be constructed from environment variables (`Client.from_env()`)
-- [ ] `Client` can be constructed programmatically with explicit adapter instances
-- [ ] Provider routing works: requests are dispatched to the correct adapter based on `provider` field
-- [ ] Default provider is used when `provider` is omitted from a request
-- [ ] `ConfigurationError` is raised when no provider is configured and no default is set
-- [ ] Middleware chain executes in correct order (request: registration order, response: reverse order)
-- [ ] Module-level default client works (`set_default_client()` and implicit lazy initialization)
-- [ ] Model catalog is populated with current models and `get_model_info()` / `list_models()` return correct data
+<!-- NOTE: The Unified LLM Client is NOT implemented as a standalone library. backend-pi-dev delegates all LLM communication to pi-mono (pi-ai + pi-agent-core + pi-coding-agent). The types below (Client, Request, Response, etc.) do not exist as our own code. -->
+
+- [ ] `Client` can be constructed from environment variables (`Client.from_env()`) <!-- not implemented; pi-mono's getModel() + AuthStorage used instead -->
+- [ ] `Client` can be constructed programmatically with explicit adapter instances <!-- not implemented -->
+- [ ] Provider routing works: requests are dispatched to the correct adapter based on `provider` field <!-- not implemented as Client routing; PiAgentCodergenBackend.resolveProfile() selects profiles by provider string -->
+- [ ] Default provider is used when `provider` is omitted from a request <!-- not implemented as Client behavior; backend uses defaultProvider option -->
+- [ ] `ConfigurationError` is raised when no provider is configured and no default is set <!-- not implemented; falls back to Anthropic silently -->
+- [ ] Middleware chain executes in correct order (request: registration order, response: reverse order) <!-- not implemented -->
+- [ ] Module-level default client works (`set_default_client()` and implicit lazy initialization) <!-- not implemented -->
+- [ ] Model catalog is populated with current models and `get_model_info()` / `list_models()` return correct data <!-- not implemented; pi-mono has its own ModelRegistry but no get_model_info/list_models/get_latest_model -->
 
 ### 8.2 Provider Adapters
 
 For EACH provider (OpenAI, Anthropic, Gemini), verify:
 
-- [ ] Adapter uses the provider's **native API** (OpenAI: Responses API, Anthropic: Messages API, Gemini: Gemini API) -- NOT a compatibility shim
-- [ ] Authentication works (API key from env var or explicit config)
-- [ ] `complete()` sends a request and returns a correctly populated `Response`
-- [ ] `stream()` returns an async iterator of correctly typed `StreamEvent` objects
-- [ ] System messages are extracted/handled per provider convention
-- [ ] All 5 roles (SYSTEM, USER, ASSISTANT, TOOL, DEVELOPER) are translated correctly
-- [ ] `provider_options` escape hatch passes through provider-specific parameters
-- [ ] Beta headers are supported (especially Anthropic's `anthropic-beta` header)
-- [ ] HTTP errors are translated to the correct error hierarchy types
-- [ ] `Retry-After` headers are parsed and set on the error object
+<!-- All LLM API communication is delegated to pi-mono. We do not implement our own ProviderAdapter classes. -->
+
+- [ ] Adapter uses the provider's **native API** (OpenAI: Responses API, Anthropic: Messages API, Gemini: Gemini API) -- NOT a compatibility shim <!-- delegated to pi-mono; pi-mono uses native APIs but we have no control or visibility -->
+- [ ] Authentication works (API key from env var or explicit config) <!-- delegated to pi-mono's AuthStorage -->
+- [ ] `complete()` sends a request and returns a correctly populated `Response` <!-- not implemented; pi-mono's Agent handles LLM calls internally -->
+- [ ] `stream()` returns an async iterator of correctly typed `StreamEvent` objects <!-- not implemented; pi-mono streams internally, we re-emit as SessionEvents -->
+- [ ] System messages are extracted/handled per provider convention <!-- delegated to pi-mono -->
+- [ ] All 5 roles (SYSTEM, USER, ASSISTANT, TOOL, DEVELOPER) are translated correctly <!-- delegated to pi-mono -->
+- [ ] `provider_options` escape hatch passes through provider-specific parameters <!-- ProviderProfile.providerOptions field exists but is never read or passed through to pi-mono -->
+- [ ] Beta headers are supported (especially Anthropic's `anthropic-beta` header) <!-- not implemented; no mechanism to pass beta headers to pi-mono -->
+- [ ] HTTP errors are translated to the correct error hierarchy types <!-- not implemented; isUnrecoverableError() does string matching on error messages instead of a typed hierarchy -->
+- [ ] `Retry-After` headers are parsed and set on the error object <!-- not implemented -->
 
 ### 8.3 Message & Content Model
 
-- [ ] Messages with text-only content work across all providers
-- [ ] **Image input works**: images sent as URL, base64 data, and local file path are correctly translated per provider
-- [ ] Audio and document content parts are handled (or gracefully rejected if provider doesn't support them)
-- [ ] Tool call content parts round-trip correctly (assistant message with tool calls -> tool result messages -> next assistant message)
-- [ ] Thinking blocks (Anthropic) are preserved and round-tripped with signatures intact
-- [ ] Redacted thinking blocks are passed through verbatim
-- [ ] Multimodal messages (text + images in the same message) work
+<!-- We do not define our own Message/ContentPart types. pi-mono's AgentMessage is used directly. -->
+
+- [ ] Messages with text-only content work across all providers <!-- delegated to pi-mono; works but not our code -->
+- [ ] **Image input works**: images sent as URL, base64 data, and local file path are correctly translated per provider <!-- not implemented; no image content handling in our layer -->
+- [ ] Audio and document content parts are handled (or gracefully rejected if provider doesn't support them) <!-- not implemented -->
+- [ ] Tool call content parts round-trip correctly (assistant message with tool calls -> tool result messages -> next assistant message) <!-- delegated to pi-mono -->
+- [ ] Thinking blocks (Anthropic) are preserved and round-tripped with signatures intact <!-- delegated to pi-mono -->
+- [ ] Redacted thinking blocks are passed through verbatim <!-- delegated to pi-mono -->
+- [ ] Multimodal messages (text + images in the same message) work <!-- not implemented at our layer -->
 
 ### 8.4 Generation
 
-- [ ] `generate()` works with a simple text `prompt`
-- [ ] `generate()` works with a full `messages` list
-- [ ] `generate()` rejects when both `prompt` and `messages` are provided
-- [ ] `stream()` yields `TEXT_DELTA` events that concatenate to the full response text
-- [ ] `stream()` yields `STREAM_START` and `FINISH` events with correct metadata
-- [ ] Streaming follows the start/delta/end pattern for text segments
-- [ ] `generate_object()` returns parsed, validated structured output
-- [ ] `generate_object()` raises `NoObjectGeneratedError` on parse/validation failure
-- [ ] Cancellation via abort signal works for both `generate()` and `stream()`
-- [ ] Timeouts work (total timeout and per-step timeout)
+<!-- The high-level generate()/stream()/generate_object() API is not implemented. The agent loop uses pi-mono's Agent.prompt() directly. -->
+
+- [ ] `generate()` works with a simple text `prompt` <!-- not implemented -->
+- [ ] `generate()` works with a full `messages` list <!-- not implemented -->
+- [ ] `generate()` rejects when both `prompt` and `messages` are provided <!-- not implemented -->
+- [ ] `stream()` yields `TEXT_DELTA` events that concatenate to the full response text <!-- not implemented as SDK-level stream(); pi-mono streams internally, re-emitted as SessionEvents -->
+- [ ] `stream()` yields `STREAM_START` and `FINISH` events with correct metadata <!-- not implemented -->
+- [ ] Streaming follows the start/delta/end pattern for text segments <!-- not implemented at SDK level -->
+- [ ] `generate_object()` returns parsed, validated structured output <!-- not implemented -->
+- [ ] `generate_object()` raises `NoObjectGeneratedError` on parse/validation failure <!-- not implemented -->
+- [ ] Cancellation via abort signal works for both `generate()` and `stream()` <!-- not implemented at SDK level; Session.abort() works at the agent loop level -->
+- [ ] Timeouts work (total timeout and per-step timeout) <!-- not implemented at SDK level; command timeouts work but no LLM call timeouts -->
 
 ### 8.5 Reasoning Tokens
 
-- [ ] OpenAI reasoning models (GPT-5.2 series, etc.) return `reasoning_tokens` in `Usage` via the Responses API
-- [ ] `reasoning_effort` parameter is passed through correctly to OpenAI reasoning models
-- [ ] Anthropic extended thinking blocks are returned as `THINKING` content parts when enabled
-- [ ] Thinking block `signature` field is preserved for round-tripping
-- [ ] Gemini thinking tokens (`thoughtsTokenCount`) are mapped to `reasoning_tokens` in `Usage`
-- [ ] `Usage` correctly reports `reasoning_tokens` as distinct from `output_tokens`
+<!-- All reasoning/thinking is handled by pi-mono. We have no unified Usage type. -->
+
+- [ ] OpenAI reasoning models (GPT-5.2 series, etc.) return `reasoning_tokens` in `Usage` via the Responses API <!-- no unified Usage type; delegated to pi-mono -->
+- [ ] `reasoning_effort` parameter is passed through correctly to OpenAI reasoning models <!-- delegated to pi-mono via ThinkingLevel; not verified for OpenAI specifically -->
+- [ ] Anthropic extended thinking blocks are returned as `THINKING` content parts when enabled <!-- delegated to pi-mono -->
+- [ ] Thinking block `signature` field is preserved for round-tripping <!-- delegated to pi-mono -->
+- [ ] Gemini thinking tokens (`thoughtsTokenCount`) are mapped to `reasoning_tokens` in `Usage` <!-- no unified Usage type -->
+- [ ] `Usage` correctly reports `reasoning_tokens` as distinct from `output_tokens` <!-- no unified Usage type -->
 
 ### 8.6 Prompt Caching
+
+<!-- None of the prompt caching work is implemented. pi-mono may do some of this internally but we have no visibility or control. -->
 
 - [ ] **OpenAI**: caching works automatically via the Responses API (no client-side configuration needed)
 - [ ] **OpenAI**: `Usage.cache_read_tokens` is populated from `usage.prompt_tokens_details.cached_tokens`
@@ -2040,29 +2052,33 @@ For EACH provider (OpenAI, Anthropic, Gemini), verify:
 
 ### 8.7 Tool Calling
 
-- [ ] Tools with `execute` handlers (active tools) trigger automatic tool execution loops
-- [ ] Tools without `execute` handlers (passive tools) return tool calls to the caller without looping
-- [ ] `max_tool_rounds` is respected: loop stops after the configured number of rounds
-- [ ] `max_tool_rounds = 0` disables automatic execution entirely
-- [ ] **Parallel tool calls**: when the model returns N tool calls in one response, all N are executed concurrently
-- [ ] **Parallel tool results**: all N results are sent back in a single continuation request (not one at a time)
-- [ ] Tool execution errors are sent to the model as error results (`is_error = true`), not raised as exceptions
-- [ ] Unknown tool calls (model calls a tool not in definitions) send an error result, not an exception
-- [ ] `ToolChoice` modes (auto, none, required, named) are translated correctly per provider
-- [ ] Tool call argument JSON is parsed and validated before passing to execute handlers
-- [ ] `StepResult` objects track each step's tool calls, results, and usage
+<!-- Tool calling at the SDK level (generate() with active/passive tools) is not implemented. Tool execution is handled by the agent loop in backend-pi-dev via pi-mono's Agent. -->
+
+- [ ] Tools with `execute` handlers (active tools) trigger automatic tool execution loops <!-- not implemented at SDK level; done at agent loop level via pi-mono -->
+- [ ] Tools without `execute` handlers (passive tools) return tool calls to the caller without looping <!-- not implemented -->
+- [ ] `max_tool_rounds` is respected: loop stops after the configured number of rounds <!-- not implemented at SDK level; done at agent loop level via maxToolRoundsPerInput -->
+- [ ] `max_tool_rounds = 0` disables automatic execution entirely <!-- not implemented -->
+- [ ] **Parallel tool calls**: when the model returns N tool calls in one response, all N are executed concurrently <!-- delegated to pi-mono -->
+- [ ] **Parallel tool results**: all N results are sent back in a single continuation request (not one at a time) <!-- delegated to pi-mono -->
+- [ ] Tool execution errors are sent to the model as error results (`is_error = true`), not raised as exceptions <!-- delegated to pi-mono -->
+- [ ] Unknown tool calls (model calls a tool not in definitions) send an error result, not an exception <!-- delegated to pi-mono -->
+- [ ] `ToolChoice` modes (auto, none, required, named) are translated correctly per provider <!-- not implemented; no ToolChoice type -->
+- [ ] Tool call argument JSON is parsed and validated before passing to execute handlers <!-- delegated to pi-mono -->
+- [ ] `StepResult` objects track each step's tool calls, results, and usage <!-- not implemented; no StepResult type -->
 
 ### 8.8 Error Handling & Retry
 
-- [ ] All errors in the hierarchy are raised for the correct HTTP status codes (see Section 6.4 table)
-- [ ] `retryable` flag is set correctly on each error type
-- [ ] Exponential backoff with jitter works: delays increase correctly per attempt
-- [ ] `Retry-After` header overrides calculated backoff when present (and within `max_delay`)
-- [ ] `max_retries = 0` disables automatic retries
-- [ ] Rate limit errors (429) are retried transparently
-- [ ] Non-retryable errors (401, 403, 404) are raised immediately without retry
-- [ ] Retries apply per-step, not to the entire multi-step operation
-- [ ] Streaming does not retry after partial data has been delivered
+<!-- No error hierarchy or retry logic is implemented. pi-mono handles retries internally. -->
+
+- [ ] All errors in the hierarchy are raised for the correct HTTP status codes (see Section 6.4 table) <!-- not implemented; no error hierarchy -->
+- [ ] `retryable` flag is set correctly on each error type <!-- not implemented -->
+- [ ] Exponential backoff with jitter works: delays increase correctly per attempt <!-- not implemented; delegated to pi-mono -->
+- [ ] `Retry-After` header overrides calculated backoff when present (and within `max_delay`) <!-- not implemented -->
+- [ ] `max_retries = 0` disables automatic retries <!-- not implemented -->
+- [ ] Rate limit errors (429) are retried transparently <!-- delegated to pi-mono -->
+- [ ] Non-retryable errors (401, 403, 404) are raised immediately without retry <!-- delegated to pi-mono -->
+- [ ] Retries apply per-step, not to the entire multi-step operation <!-- not implemented -->
+- [ ] Streaming does not retry after partial data has been delivered <!-- not implemented -->
 
 ### 8.9 Cross-Provider Parity
 
