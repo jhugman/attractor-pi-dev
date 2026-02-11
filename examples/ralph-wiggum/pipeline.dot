@@ -1,0 +1,38 @@
+digraph RalphWiggum {
+    graph [
+        goal="Implement epic $epic_id, one issue at a time",
+        vars="epic_id"
+    ]
+    rankdir=TB
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    // Task selection
+    list_ready [shape=parallelogram, label="List Ready Tasks",
+                tool_command="br ready --parent $epic_id --recursive --json"]
+    has_task   [shape=diamond, label="Task available?"]
+
+    // One-issue implementation cycle
+    subgraph cluster_work {
+        label = "Implement Issue"
+        node [fidelity="full", thread_id="work"]
+
+        plan      [label="Claim and Plan", prompt="@prompts/plan.md"]
+        implement [label="Implement", prompt="@prompts/implement.md"]
+        validate  [label="Validate", prompt="@prompts/validate.md"]
+        check     [shape=diamond, label="Validation passed?"]
+        complete [label="Close Issue", prompt="@prompts/complete.md"]
+        sync     [shape=parallelogram, label="Sync", tool_command="br sync --flush-only"]
+        commit   [label="Commit", prompt="@prompts/commit.md"]
+    }
+
+    // Flow
+    start -> list_ready -> has_task
+    has_task -> plan      [condition="tool.output contains \"id\"", fidelity="compact"]
+    has_task -> exit      [condition="!tool.output contains \"id\""]
+    plan -> implement -> validate -> check
+    check -> complete    [condition="outcome=success"]
+    check -> implement   [condition="outcome!=success", label="Fix"]
+    complete -> sync -> commit -> list_ready
+}

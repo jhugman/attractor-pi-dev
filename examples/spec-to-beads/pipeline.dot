@@ -1,0 +1,26 @@
+digraph SpecToBeads {
+    graph [
+        goal="Break $rfc_path into an implementation epic with beads issues",
+        vars="rfc_path"
+    ]
+    rankdir=TB
+
+    node [fidelity="full", thread_id="main"]
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    understand  [label="Understand", prompt="@prompts/understand.md"]
+    decompose   [label="Decompose", prompt="@prompts/decompose.md"]
+    file_issues [label="File Issues", prompt="@prompts/file-issues.md"]
+    review      [label="Review", prompt="@prompts/review.md"]
+    review_gate [shape=hexagon, label="Review Issues"]
+    sync        [shape=parallelogram, label="Sync", tool_command="br sync --flush-only"]
+
+    start -> understand -> decompose -> file_issues -> review -> review_gate
+    review_gate -> sync         [label="[A] Approve"]
+    review_gate -> file_issues  [label="[G] Gaps in RFC coverage"]
+    review_gate -> file_issues  [label="[S] Issues too big, split them"]
+    review_gate -> review       [label="[R] Re-review"]
+    sync -> exit
+}
