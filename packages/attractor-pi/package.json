@@ -1,0 +1,25 @@
+{
+  "name": "@jhugman/attractor-pi",
+  "version": "0.1.0",
+  "description": "DOT-based pipeline runner for orchestrating multi-stage AI workflows",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "attractor": "dist/attractor.mjs"
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.52.9",
+    "@mariozechner/pi-ai": "^0.52.9",
+    "@mariozechner/pi-agent-core": "^0.52.9"
+  },
+  "devDependencies": {
+    "@attractor/cli": "workspace:*",
+    "esbuild": "^0.25.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @attractor/core --filter @attractor/backend-pi-dev --filter @attractor/cli build && node esbuild.config.mjs",
+    "prepublishOnly": "pnpm run build"
+  }
+}

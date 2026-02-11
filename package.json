@@ -4,8 +4,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:smoke": "pnpm -r test:smoke",
     "lint": "pnpm -r lint",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "build:dist": "pnpm --filter @jhugman/attractor-pi build",
+    "publish:dist": "pnpm build:dist && npm -C packages/attractor-pi publish --access public"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
